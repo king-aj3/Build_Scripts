@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.2.1"
+SCRIPT_VERSION    = "1.4.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -408,13 +408,30 @@ def find_pythons():
     return sorted(found.items(), key=lambda x: x[0], reverse=True)
 
 
-def get_best_python():
-    """Highest stable Python; falls back to experimental with warning."""
+def get_best_python(prefer_below: tuple | None = None):
+    """
+    Pick the best Python.
+
+    Order of preference:
+      1. If prefer_below=(M, N): newest STABLE Python < (M, N).
+         (Used for `--compiler=mingw64` which Nuitka 4.x blocks on 3.13+.)
+      2. Newest STABLE Python (any version).
+      3. Newest EXPERIMENTAL Python (with warning).
+    Returns (version_tuple, Path) or (None, None) if no compatible Python.
+    """
     available = find_pythons()
     if not available:
         return None, None
     stable     = [(v, p) for v, p in available if v not in NUITKA_EXPERIMENTAL]
     experiment = [(v, p) for v, p in available if v in NUITKA_EXPERIMENTAL]
+
+    # 1. Compiler-constrained preference
+    if prefer_below and stable:
+        constrained = [(v, p) for v, p in stable if v < prefer_below]
+        if constrained:
+            return constrained[0]   # newest stable below the cap
+
+    # 2. Newest stable
     if stable:
         ver, path = stable[0]
         if experiment and experiment[0][0] > ver:
@@ -422,15 +439,136 @@ def get_best_python():
             warn(f"Python {sk[0]}.{sk[1]} skipped - Nuitka experimental only.")
             info(f"Using Python {ver[0]}.{ver[1]} for stable build.")
         return ver, path
+
+    # 3. Newest experimental (warn the user)
     ver, path = experiment[0]
     warn(f"Only Python {ver[0]}.{ver[1]} available - Nuitka experimental.")
     warn("Install Python 3.13 for a stable build.")
     return ver, path
 
 
-def auto_install_python():
-    """Try to install Python via system package manager."""
-    target = "3.13"
+def _msvc_available() -> bool:
+    """
+    Best-effort: True iff Nuitka has a reasonable chance of finding MSVC.
+    Checks vswhere (preferred) and cl.exe on PATH.
+    """
+    if not IS_WIN:
+        return False
+    if shutil.which("cl"):
+        return True
+    for env_var in ("ProgramFiles(x86)", "ProgramFiles"):
+        base = os.environ.get(env_var, "")
+        if not base:
+            continue
+        vswhere = Path(base) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+        if vswhere.is_file():
+            try:
+                r = subprocess.run(
+                    [str(vswhere), "-latest", "-products", "*",
+                     "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                     "-property", "installationPath"],
+                    capture_output=True, text=True, timeout=10)
+                if r.returncode == 0 and r.stdout.strip():
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _install_msvc() -> bool:
+    """Auto-install MSVC Build Tools (VCTools workload, ~3 GB) via winget.
+    Returns True iff vswhere reports MSVC after the install completes.
+    """
+    if not IS_WIN:
+        return False
+    if not shutil.which("winget"):
+        error("winget is not on PATH - cannot auto-install MSVC.")
+        say("  Manual install: https://visualstudio.microsoft.com/downloads/")
+        return False
+
+    step("Installing MSVC Build Tools (VCTools workload, ~3 GB) via winget...")
+    info("This typically takes 10-20 minutes. Do not close this window.")
+    cmd = [
+        "winget", "install",
+        "--id", "Microsoft.VisualStudio.2022.BuildTools",
+        "-e",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+        "--override",
+        "--quiet --wait "
+        "--add Microsoft.VisualStudio.Workload.VCTools "
+        "--includeRecommended",
+    ]
+    try:
+        r = subprocess.run(cmd, timeout=1800)   # 30 min cap
+    except subprocess.TimeoutExpired:
+        error("MSVC install timed out after 30 minutes.")
+        return False
+    except Exception as e:
+        error(f"MSVC install raised: {e}")
+        return False
+
+    if r.returncode == 0 and _msvc_available():
+        info("MSVC installation complete.")
+        return True
+    if r.returncode != 0:
+        error(f"MSVC install exited with status {r.returncode}.")
+    else:
+        error("MSVC install reported success but vswhere can't find it.")
+    return False
+
+
+def _resolve_compiler_auto(auto_yes: bool = False) -> str:
+    """
+    Resolve --compiler=auto to a concrete compiler on Windows.
+
+    Tier 1: MSVC already installed -> "msvc" (will use Python 3.13)
+    Tier 2: MSVC missing, user agrees to install, install succeeds -> "msvc"
+    Tier 3: anything else -> "mingw64" (will use Python <3.13)
+    """
+    if not IS_WIN:
+        return ""   # Linux/macOS: no compiler flag, system default is used
+
+    if _msvc_available():
+        info("MSVC detected via vswhere - using --compiler=msvc.")
+        return "msvc"
+
+    say("")
+    banner("MSVC Build Tools not found")
+    say("  Auto mode prefers MSVC for best build quality with Python 3.13.")
+    say("  Fallback path: MinGW64 + Python 3.12 (~180 MB total).")
+    say("")
+
+    do_install = auto_yes
+    if not do_install:
+        if not sys.stdin.isatty():
+            warn("Non-interactive terminal - skipping install prompt.")
+            info("Using --compiler=mingw64 (Python 3.12 path).")
+            info("To auto-install MSVC non-interactively, pass --yes.")
+            return "mingw64"
+        try:
+            ans = input("  Install MSVC Build Tools (~3 GB, 10-20 min)? "
+                        "[y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = ""
+        do_install = ans in ("y", "yes")
+
+    if not do_install:
+        info("Using --compiler=mingw64 (Python 3.12 path).")
+        return "mingw64"
+
+    if _install_msvc():
+        info("Switching to --compiler=msvc.")
+        return "msvc"
+
+    warn("MSVC install failed - falling back to --compiler=mingw64 + Python 3.12.")
+    return "mingw64"
+
+
+def auto_install_python(target: str = "3.13"):
+    """Try to install Python <target> via system package manager.
+    Returns Path to the installed Python (or matching one), or None on failure.
+    """
     step(f"Attempting to install Python {target} via system package manager...")
     try:
         if IS_WIN:
@@ -452,6 +590,15 @@ def auto_install_python():
                 error("No supported Linux package manager."); return None
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         error(f"Auto-install failed: {e}"); return None
+
+    # Prefer the exact version we tried to install
+    try:
+        target_tuple = tuple(int(x) for x in target.split(".")[:2])
+    except Exception:
+        target_tuple = None
+    for v, p in find_pythons():
+        if v == target_tuple:
+            return p
     _, p = get_best_python()
     return p
 
@@ -469,9 +616,12 @@ def check_compiler(compiler: str):
             info("MinGW64 will be auto-downloaded by Nuitka if missing.")
             return
         if compiler == "msvc":
-            if shutil.which("cl"):
-                info("MSVC (cl.exe) found."); return
-            error("MSVC not found. Install Visual Studio Build Tools or use --compiler=mingw64.")
+            if _msvc_available():
+                info("MSVC detected (via cl.exe or vswhere)."); return
+            error("MSVC not found.")
+            say("  Install with: winget install Microsoft.VisualStudio.2022.BuildTools")
+            say("  (select 'Desktop development with C++' workload)")
+            say("  Or switch to MinGW64: --compiler=mingw64 (needs Python <3.13).")
             sys.exit(1)
         if compiler == "clang":
             if shutil.which("clang"):
@@ -511,11 +661,17 @@ def _pip(venv_py: Path, *args):
 
 
 def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
-                    force_recreate: bool = False) -> Path | None:
-    """Create or reuse build_env; install Nuitka and requirements."""
+                    force_recreate: bool = False, compiler: str = "") -> Path | None:
+    """Create or reuse build_env; install Nuitka and requirements.
+
+    `compiler` is used to bias Python selection — MinGW64 needs Python <3.13.
+    """
     venv_dir = project_dir / "build_env"
     venv_py  = venv_python(venv_dir)
     step("Preparing build environment...")
+
+    # Compiler-aware Python preference: MinGW64 doesn't work on Python 3.13+
+    prefer_below = (3, 13) if (IS_WIN and compiler == "mingw64") else None
 
     # Reuse?
     if venv_dir.exists() and not force_recreate and venv_py.is_file():
@@ -526,8 +682,24 @@ def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
             ma_s, mi_s, *_ = ver_str.split(".")
             ver = (int(ma_s), int(mi_s))
             if MIN_PYTHON <= ver <= MAX_PYTHON:
+                # Compiler-incompatible: existing venv Python conflicts with chosen compiler
+                if prefer_below and ver >= prefer_below:
+                    constrained = [v for v, _ in find_pythons()
+                                   if v not in NUITKA_EXPERIMENTAL and v < prefer_below]
+                    if constrained:
+                        warn(f"Existing build env uses Python {ver[0]}.{ver[1]}, "
+                             f"but {compiler} needs Python <{prefer_below[0]}.{prefer_below[1]}.")
+                        info(f"Rebuilding venv with Python {constrained[0][0]}.{constrained[0][1]}.")
+                        shutil.rmtree(venv_dir)
+                    else:
+                        warn(f"Existing build env uses Python {ver[0]}.{ver[1]} - "
+                             f"{compiler} needs <{prefer_below[0]}.{prefer_below[1]}, "
+                             f"but no such Python is installed.")
+                        info(f"Reusing venv; compiler will auto-fall-back at compile time.")
+                        _install_packages(project_dir, venv_py, cfg)
+                        return venv_py
                 # Rebuild if it's experimental and a stable exists
-                if ver in NUITKA_EXPERIMENTAL:
+                elif ver in NUITKA_EXPERIMENTAL:
                     stable = [v for v, _ in find_pythons() if v not in NUITKA_EXPERIMENTAL]
                     if stable:
                         warn(f"Build env uses Python {ver[0]}.{ver[1]} (experimental); rebuilding stable.")
@@ -552,13 +724,32 @@ def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
             error(f"Forced Python not found: {forced_python}")
             return None
     else:
-        ver, python_exe = get_best_python()
+        ver, python_exe = get_best_python(prefer_below=prefer_below)
         if ver is None:
             warn("No compatible Python found - attempting auto-install.")
             python_exe = auto_install_python()
             if python_exe is None:
                 error("Install Python 3.13 from https://python.org and retry.")
                 return None
+        elif prefer_below and ver >= prefer_below:
+            target = f"{prefer_below[0]}.{prefer_below[1] - 1}"
+            warn(f"Compiler '{compiler}' needs Python <{prefer_below[0]}.{prefer_below[1]}, "
+                 f"but only Python {ver[0]}.{ver[1]} is installed.")
+            info(f"Auto-installing Python {target} for MinGW64 compatibility...")
+            new_py = auto_install_python(target)
+            if new_py:
+                # Verify the new Python actually meets the constraint
+                new_ver = _python_version(new_py)
+                if new_ver and new_ver < prefer_below:
+                    python_exe = new_py
+                    info(f"Using newly installed Python {new_ver[0]}.{new_ver[1]}.")
+                else:
+                    warn(f"Auto-installed Python doesn't meet the <"
+                         f"{prefer_below[0]}.{prefer_below[1]} constraint.")
+                    info("Build will fall back to MSVC at compile time (if available).")
+            else:
+                warn(f"Could not auto-install Python {target}.")
+                info("Build will fall back to MSVC at compile time (if available).")
 
     info(f"Creating venv with {python_exe}")
     r = subprocess.run([str(python_exe), "-m", "venv", str(venv_dir)],
@@ -622,9 +813,52 @@ def _nuitka_env() -> dict:
     return env
 
 
+def _python_version(py: Path) -> tuple | None:
+    """Return (major, minor) for the given Python exe; None on failure."""
+    try:
+        r = subprocess.run(
+            [str(py), "-c",
+             "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+            capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            ma, mi = r.stdout.strip().split(".")
+            return (int(ma), int(mi))
+    except Exception:
+        pass
+    return None
+
+
 def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
                          onefile: bool, compiler: str, jobs: int) -> list:
     build_dir = project_dir / "build"
+
+    # ── Nuitka constraint: --mingw64 is BLOCKED on Python 3.13+ ───────────
+    # Auto-fallback to MSVC keeps the build succeeding without user action.
+    # If MSVC isn't installed, abort with actionable instructions.
+    if IS_WIN and compiler == "mingw64":
+        venv_ver = _python_version(venv_py)
+        if venv_ver and venv_ver >= (3, 13):
+            warn(f"MinGW64 unsupported on Python {venv_ver[0]}.{venv_ver[1]} "
+                 f"(Nuitka 4.x constraint).")
+            if _msvc_available():
+                info("MSVC detected via vswhere - auto-fallback to --compiler=msvc.")
+                compiler = "msvc"
+            else:
+                error("Neither MinGW64 (blocked by Nuitka) nor MSVC is usable.")
+                say("")
+                say("  Pick ONE of these to fix:")
+                say("")
+                say("  OPTION 1 - install Python 3.12 to keep MinGW64 (smaller download):")
+                say("    winget install Python.Python.3.12")
+                say(f"    python build.py <project> --clean-env")
+                say("")
+                say("  OPTION 2 - install Visual Studio Build Tools (larger, ~6 GB):")
+                say("    winget install Microsoft.VisualStudio.2022.BuildTools")
+                say("    (select 'Desktop development with C++' workload during install)")
+                say(f"    python build.py <project>")
+                say("")
+                sys.exit(1)
+
     cmd = [
         str(venv_py), "-m", "nuitka",
         f"--output-dir={build_dir}",
@@ -747,7 +981,12 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
 # ═════════════════════════════════════════════════════════════════════════════
 
 def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
-              jobs: int, forced_python=None, ci: bool = False) -> bool:
+              jobs: int, forced_python=None, ci: bool = False,
+              auto_yes: bool = False) -> bool:
+    # Resolve --compiler=auto BEFORE banner/checks so the rest sees a real value
+    if compiler == "auto":
+        compiler = _resolve_compiler_auto(auto_yes=auto_yes)
+
     mode = "One-File" if onefile else "Standalone Folder"
     banner(f"{cfg.name} v{cfg.version} - Nuitka Build ({mode})")
     say(f"  Project   : {project_dir}")
@@ -762,7 +1001,8 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         info(f"CI mode - using current Python: {venv_py}")
         _install_packages(project_dir, venv_py, cfg)
     else:
-        venv_py = setup_build_env(project_dir, cfg, forced_python=forced_python)
+        venv_py = setup_build_env(project_dir, cfg, forced_python=forced_python,
+                                  compiler=compiler)
         if venv_py is None:
             error("Build aborted - no compatible Python.")
             return False
@@ -1268,12 +1508,15 @@ def main():
         description=f"Common Nuitka build script v{SCRIPT_VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
-            Defaults:  --onefile,  --compiler=mingw64 (on Windows).
+            Defaults:  --onefile,  --compiler=auto (Windows: MSVC if available,
+            else asks to install Build Tools; declines fall back to MinGW64).
             Examples:
               python build.py "$ProjectFileDir$" --init   # NEW: onboard a project
               python build.py "$ProjectFileDir$"          # build (default: onefile)
               python build.py /path/to/project --standalone
-              python build.py . --compiler=msvc
+              python build.py . --compiler=msvc           # force MSVC
+              python build.py . --compiler=mingw64        # force MinGW64
+              python build.py . --yes                     # auto-accept install prompts
               python build.py . --clean --clean-env
               python build.py . --info
               python build.py . --audit
@@ -1288,9 +1531,10 @@ def main():
     mode.add_argument("--onefile",    action="store_true", help="(default) Single-file exe")
     mode.add_argument("--standalone", action="store_true", help="Folder build instead")
     # Compiler
-    parser.add_argument("--compiler", choices=["mingw64", "msvc", "clang"],
-                        default="mingw64",
-                        help="C compiler (Windows). Default: mingw64.")
+    parser.add_argument("--compiler", choices=["auto", "mingw64", "msvc", "clang"],
+                        default="auto",
+                        help="C compiler (Windows). Default 'auto': MSVC if "
+                             "installed/installable, else MinGW64 + Python 3.12.")
     # Operations
     parser.add_argument("--clean",      action="store_true", help="Remove build/dist first")
     parser.add_argument("--clean-env",  action="store_true", help="Also remove build_env")
@@ -1306,6 +1550,8 @@ def main():
                         help="Where --init writes (default: build_config.toml)")
     parser.add_argument("--force",      action="store_true",
                         help="Overwrite existing config (use with --init)")
+    parser.add_argument("--yes", "-y",   action="store_true",
+                        help="Auto-accept install prompts (e.g., MSVC Build Tools)")
     parser.add_argument("--ci",         action="store_true", help="Use current Python, no venv")
     # Tuning
     parser.add_argument("--jobs",   type=int, default=multiprocessing.cpu_count(),
@@ -1349,7 +1595,7 @@ def main():
 
     if args.setup_only:
         vp = setup_build_env(project_dir, cfg, forced_python=args.python,
-                             force_recreate=args.clean_env)
+                             force_recreate=args.clean_env, compiler=args.compiler)
         if vp:
             banner("Build env ready")
             say(f"  Python: {vp}")
@@ -1357,7 +1603,8 @@ def main():
 
     ok = run_build(project_dir, cfg,
                    onefile=onefile, compiler=args.compiler,
-                   jobs=args.jobs, forced_python=args.python, ci=args.ci)
+                   jobs=args.jobs, forced_python=args.python, ci=args.ci,
+                   auto_yes=args.yes)
     if ok and args.test:
         step("Smoke test...")
         smoke_test(project_dir, cfg)

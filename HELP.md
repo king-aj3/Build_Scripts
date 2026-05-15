@@ -21,9 +21,10 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag                  | Notes                                                      |
 | --------------------- | ---------------------------------------------------------- |
-| `--compiler=mingw64`  | **Default.** Nuitka auto-downloads MinGW64 if missing.     |
-| `--compiler=msvc`     | Uses installed Visual Studio Build Tools. Disables LTO on huge sources. |
-| `--compiler=clang`    | Uses `clang.exe` if on PATH.                               |
+| `--compiler=auto`     | **Default.** MSVC if installed/installable, else MinGW64 + Python 3.12. |
+| `--compiler=mingw64`  | Force MinGW64. Auto-installs Python 3.12 if needed.        |
+| `--compiler=msvc`     | Force MSVC. Auto-detected via `vswhere`; aborts if missing.|
+| `--compiler=clang`    | Use `clang.exe` if on PATH (needs MSVC SDK on Windows).    |
 
 ## Operations
 
@@ -38,6 +39,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | `--test`              | Launch the built exe (auto-passes after 30s).                |
 | `--info`              | Show config + Python survey. No build.                       |
 | `--audit`             | Validate config vs. project files. Suggests unbundled assets.|
+| `--yes` / `-y`        | Auto-accept install prompts (MSVC Build Tools, Python).      |
 | `--ci`                | Skip venv. Use current Python (for GitHub Actions).          |
 
 ## Tuning
@@ -63,6 +65,20 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | GitHub Actions                    | `python build.py . --ci`                                      |
 
 ## Troubleshooting
+
+### "FATAL: cannot use '--mingw64' on Python version 3.13 or higher"
+Nuitka 4.x blocks MinGW64 on Python 3.13+. As of v1.3.0 the build script
+prefers Python ≤3.12 when MinGW64 is the chosen compiler, so this rarely
+surfaces. If only Python 3.13+ is installed, the script:
+- Falls back to MSVC if VS Build Tools is detected.
+- Aborts with install instructions otherwise.
+
+To keep MinGW64: `winget install Python.Python.3.12`, then re-run with
+`--clean-env` to rebuild the venv against 3.12.
+
+To switch to MSVC permanently: `winget install Microsoft.VisualStudio.2022.BuildTools`
+(select "Desktop development with C++" workload), then re-run with
+`--compiler=msvc`.
 
 ### Build fails with "MinGW64 not found"
 With `--compiler=mingw64` (the default), Nuitka downloads MinGW64 on first

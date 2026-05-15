@@ -107,7 +107,37 @@ generated comments in the TOML guide the user to fill in the rest, and
 
 ---
 
-## Why MinGW64 is the Windows default
+## Why `--compiler=auto` is the default (v1.4.0)
+
+The previous default (`mingw64`) optimized for "smallest auto-installable
+compiler", which was correct on Python ≤3.12 — MinGW64 is small,
+auto-downloads via Nuitka, and produces good binaries. But on Python
+3.13+, Nuitka blocks `--mingw64`, leaving users with three choices:
+
+1. Stay on Python 3.12 (works, but locks the version)
+2. Install MSVC manually (best results, but ~3 GB and not obvious)
+3. Use the runtime MSVC fallback added in 1.2.2 (works, but only if MSVC
+   happens to be installed)
+
+The `auto` mode in 1.4.0 captures the actual best-practice flow:
+
+- If MSVC is already installed → use it (best results, latest Python).
+- If not → ask once. User can opt into a ~3 GB install for the best path
+  forward, or accept the MinGW64 + Python 3.12 fallback for a small
+  footprint.
+- Either way, the build always succeeds with no further user action.
+
+The non-interactive path (no TTY, no `--yes`) silently chooses MinGW64 +
+Python 3.12 — safer than prompting and hanging a CI job.
+
+---
+
+
+
+## Historical: why MinGW64 was the original Windows default
+
+Superseded by `--compiler=auto` in 1.4.0. Kept here for context on why
+MinGW64 was chosen originally.
 
 MSVC bit two of the three predecessor projects:
 
@@ -120,6 +150,25 @@ MSVC bit two of the three predecessor projects:
 
 MSVC remains supported via `--compiler=msvc` for users who prefer it. The
 script also auto-falls-back `lto=auto` to `lto=no` when MSVC is selected.
+
+### Caveat: Nuitka 4.x blocks MinGW64 on Python 3.13+
+
+Nuitka 4.x refuses `--mingw64` on Python 3.13 and later (CPython API
+changes the toolchain doesn't track). v1.3.0 handles this with a
+two-layer approach:
+
+1. **Compiler-aware Python selection.** When MinGW64 is the chosen
+   compiler, `get_best_python(prefer_below=(3,13))` picks the newest
+   installed Python below 3.13. If the user has 3.10/3.11/3.12
+   alongside 3.13, the venv uses 3.12 and MinGW64 works normally.
+2. **Runtime MSVC fallback.** If only Python 3.13+ is installed, the
+   venv has to use 3.13. At Nuitka-invocation time, the script then
+   switches `--mingw64` → `--msvc=latest` (if VS Build Tools is
+   detected via `vswhere`). If neither is usable, the script aborts
+   with explicit `winget install` instructions for both fixes.
+
+The compiler-aware selection is the primary mechanism — the runtime
+fallback exists only for the rare case of a 3.13-only machine.
 
 ---
 
