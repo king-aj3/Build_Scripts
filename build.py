@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.2.0"
+SCRIPT_VERSION    = "1.2.1"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1342,9 +1342,10 @@ def main():
 
     if args.clean or args.clean_env:
         clean(project_dir, include_env=args.clean_env)
-        if not any([args.setup_only, args.test, args.ci, args.standalone,
-                    args.onefile]):
-            return
+        # Fall through to setup-only or build. Build IS the default action,
+        # so --clean alone means "clean then build" - not "clean and exit".
+        # To just clean without building, delete build/, dist/, build_env/
+        # manually, or use --clean --setup-only to clean + warm the venv.
 
     if args.setup_only:
         vp = setup_build_env(project_dir, cfg, forced_python=args.python,

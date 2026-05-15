@@ -1,9 +1,18 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.2.0
+**Script version:** 1.2.1
 **Date:** 2026-05-15
 **License:** Internal use
+
+## What's new in 1.2.1
+
+- Fix: `--clean` alone now correctly proceeds to build. Previously the
+  clean handler short-circuited because it checked for `args.onefile`
+  being explicitly True, but `--onefile` is the default action (no flag
+  required), so the script would clean and exit without building. To
+  clean without building, use `--clean --setup-only` (cleans + warms the
+  venv) or delete `build/`, `dist/`, `build_env/` manually.
 
 ## What's new in 1.2.0
 
