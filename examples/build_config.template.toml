@@ -1,0 +1,91 @@
+# build_config.toml - TEMPLATE
+# Copy to your project root as build_config.toml and edit.
+# Every section/key is optional - missing values fall back to:
+#   1. pyproject.toml [tool.nuitka_builder]   (same schema as this file)
+#   2. pyproject.toml [project]               (name/version/description/author)
+#   3. Auto-detection                         (entry, icon, PySide6 plugin)
+#
+# ALTERNATIVELY: put everything from this file under [tool.nuitka_builder.*]
+# inside your project's pyproject.toml (same key names, just nested under
+# `tool.nuitka_builder`). See USER_GUIDE.md.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [app] - App identity
+# ─────────────────────────────────────────────────────────────────────────────
+[app]
+name        = "MyApp"                    # exe/product name (no spaces ideal)
+version     = "1.0.0"                    # MAJOR.MINOR.PATCH[.BUILD]
+description = "What the app does"
+author      = "Your Name"
+entry       = "main.py"                  # main script (auto-detected if omitted)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [build] - Build-script behaviour
+# ─────────────────────────────────────────────────────────────────────────────
+[build]
+# LTO: "yes" | "no" | "auto"
+# auto = "no" on Windows+MSVC (huge generated C exhausts LTCG heap),
+#        "yes" everywhere else.  Recommended: leave as "auto".
+lto = "auto"
+
+# Packages installed into build_env in addition to requirements.txt.
+extra_requirements = [
+    # "ordered-set",  # already auto-installed with nuitka
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [nuitka] - Nuitka flags
+# ─────────────────────────────────────────────────────────────────────────────
+[nuitka]
+# Nuitka plugins (auto-detects "pyside6" from requirements.txt if absent)
+plugins = ["pyside6"]
+
+# Qt plugin set: "all" | "sensible" | "" (omit for default)
+include_qt_plugins = "all"
+
+# --include-package=X   entire package tree
+include_packages = [
+    # "reportlab",
+]
+
+# --include-package-data=X   bundle non-Python files inside the package
+include_package_data = [
+    # "tiktoken",
+]
+
+# --include-module=X   single module (dynamic-import safety net)
+include_modules = [
+    # "ui.dynamic_loader",
+]
+
+# --nofollow-import-to=X   refuse to compile huge modules
+nofollow_imports = [
+    # "pymupdf.mupdf",   # 2M-line C file, crashes MSVC LTCG
+]
+
+# Raw extra flags passed through to Nuitka verbatim.
+extra_flags = [
+    # "--noinclude-pytest-mode=nofollow",
+]
+
+# RECOMMENDED for assets - bundle whole directories.
+# Adding a new file to a bundled dir requires NO config update.
+# Each entry: "src"   (dst = src)
+#         or  ["src", "dst"]
+data_dirs = [
+    # "assets",
+    # "resources",
+]
+
+# Individual files. Each entry: ["src_relative_to_project", "dst_in_bundle"]
+data_files = [
+    # ["README.md", "README.md"],
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [icons] - Per-platform icon paths (relative to project root)
+# ─────────────────────────────────────────────────────────────────────────────
+[icons]
+windows = "assets/icon.ico"              # auto-detected if omitted
+macos   = "assets/icon.icns"
+linux   = "resources/app.desktop"        # .desktop entry, not an icon

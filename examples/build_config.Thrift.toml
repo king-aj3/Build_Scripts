@@ -1,0 +1,48 @@
+# build_config.toml - Thrift Reseller Tracker
+# Migrated from build_Thrift.py V7.
+
+[app]
+name        = "ThriftResellerTracker"
+version     = "1.0.0"
+description = "Inventory, sales, and tax tracking for thrift resellers"
+author      = "AJJ3"
+entry       = "main.py"
+
+[nuitka]
+plugins            = ["pyside6"]
+include_qt_plugins = "all"
+
+include_packages = [
+    "PySide6", "PIL", "pytesseract", "reportlab",
+    "openpyxl", "matplotlib", "cv2", "qrcode",
+    "barcode", "pymupdf", "fitz",
+]
+
+# Dynamic-import safety net - these modules are loaded at runtime via
+# importlib/__import__ and Nuitka cannot statically detect them.
+include_modules = [
+    "app_info", "app_logger", "database",
+    "tax", "tax.tax_calculator",
+    "ui", "ui.main_window", "ui.analytics_tab", "ui.capture_dialog",
+    "ui.help_system", "ui.theme_3d", "ui.smart_import_dialog",
+    "ui.color_settings_dialog",
+    "utils", "utils.analytics", "utils.app_settings", "utils.bulk_import",
+    "utils.camera_capture", "utils.chart_generator", "utils.dependency_manager",
+    "utils.export", "utils.image_manager", "utils.ocr_scanner",
+    "utils.pdf_generator", "utils.barcode_utils",
+    "utils.phone_upload", "utils.scanner_capture",
+    "utils.platforms", "utils.platforms.poshmark_parser",
+    "utils.platforms.ebay_parser", "utils.platforms.mercari_parser",
+    "utils.platforms.depop_parser", "utils.platforms.etsy_parser",
+    "utils.platforms.grailed_parser", "utils.platforms.whatnot_parser",
+    "utils.platforms.platform_import",
+]
+
+data_files = [
+    ["README.md",    "README.md"],
+    ["icon.png",     "icon.png"],
+    ["icon_pro.png", "icon_pro.png"],
+]
+
+[icons]
+windows = "icon.ico"

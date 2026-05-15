@@ -1,0 +1,47 @@
+# build_config.toml - PromptForge
+# Migrated from build_Prompt.py.
+
+[app]
+name        = "promptforge"
+version     = "2.0.0"
+description = "Prompt & Document Token Optimizer"
+author      = "PromptForge"
+entry       = "main.py"
+
+[build]
+# Auto = LTO off on Windows+MSVC (mupdf.c crashes MSVC LTCG).
+# mingw64 default handles LTO fine, but we keep auto for safety.
+lto = "auto"
+
+# Original script pinned a few extra packages alongside requirements.txt.
+extra_requirements = [
+    "ordered-set",   # nuitka runtime
+    "zstandard",     # nuitka onefile compression
+]
+
+[nuitka]
+plugins              = ["pyside6"]
+include_packages     = ["app", "app.widgets"]
+include_package_data = ["tiktoken", "anthropic", "fitz", "pymupdf"]
+
+# CRITICAL: pymupdf.mupdf generates a 2M-line C file that exhausts MSVC's heap.
+# Do NOT remove this line if you intend to ever build with MSVC.
+nofollow_imports = ["pymupdf.mupdf"]
+
+extra_flags = [
+    "--noinclude-pytest-mode=nofollow",
+]
+
+data_files = [
+    ["assets/theme_dark.qss",    "assets/theme_dark.qss"],
+    ["assets/theme_light.qss",   "assets/theme_light.qss"],
+    ["assets/style.qss",         "assets/style.qss"],
+    ["assets/check_x_light.svg", "assets/check_x_light.svg"],
+    ["assets/check_x_dark.svg",  "assets/check_x_dark.svg"],
+]
+# TIP: replace `data_files` above with `data_dirs = ["assets"]` to bundle
+# the whole directory at once. New assets dropped in won't need TOML edits.
+
+[icons]
+windows = "assets/icon.ico"
+macos   = "assets/icon.icns"

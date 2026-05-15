@@ -1,0 +1,34 @@
+# build_config.toml - LF TLZN Calculator
+# Migrated from build_TLZN.py.
+
+[app]
+name        = "TLZN_Calculator"
+version     = "1.9.0.0"
+description = "LF Transmitter Load Impedance Matching Network Calculator"
+author      = "AJenkins"
+entry       = "main.py"
+
+[nuitka]
+plugins            = ["pyside6"]
+include_qt_plugins = "all"
+
+# reportlab uses dynamic imports - declare submodules explicitly.
+include_packages = [
+    "openpyxl",
+    "reportlab",
+    "reportlab.platypus",
+    "reportlab.lib",
+    "reportlab.pdfgen",
+]
+
+data_files = [
+    ["README.md",        "README.md"],
+    ["USAGE.md",         "USAGE.md"],
+    ["DESIGN_NOTES.md",  "DESIGN_NOTES.md"],
+    ["BUILD.md",         "BUILD.md"],
+]
+
+[icons]
+windows = "resources/icon.ico"
+macos   = "resources/icon.icns"
+linux   = "resources/TLZN_Calculator.desktop"
