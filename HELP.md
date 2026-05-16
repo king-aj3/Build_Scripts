@@ -25,6 +25,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | `--compiler=mingw64`  | Force MinGW64. Auto-installs Python 3.12 if needed.        |
 | `--compiler=msvc`     | Force MSVC. Auto-detected via `vswhere`; aborts if missing.|
 | `--compiler=clang`    | Use `clang.exe` if on PATH (needs MSVC SDK on Windows).    |
+| `--force-msvc`        | Override the heavy-module guard. Forces MSVC even with `--compiler=auto`. Windows-only. Use only if you know the project survives MSVC. |
 
 ## Operations
 
@@ -85,10 +86,23 @@ With `--compiler=mingw64` (the default), Nuitka downloads MinGW64 on first
 build. If the download fails, switch to MSVC: `--compiler=msvc`. Or install
 MinGW64 via MSYS2: `winget install MSYS2.MSYS2`.
 
-### Build fails with "MSVC out of memory" / LTCG heap exhaustion
-The `pymupdf.mupdf` module compiles to ~2M lines of C and crashes MSVC's
-LTCG. Add `nofollow_imports = ["pymupdf.mupdf"]` to your `build_config.toml`
-**or** use the default `--compiler=mingw64`.
+### Build fails with "MSVC out of memory" / LTCG heap exhaustion / C1002
+Modules like `pymupdf.mupdf` compile to multi-million-line C files that
+exhaust MSVC's heap (`C1002` in pass 2, `C1060` LTCG, or `LNK1102` link).
+As of v1.5.0 the build script scans your project for **HEAVY_MODULES**
+(pymupdf, opencv-python, tensorflow, torch, scipy, pandas, lxml, shapely,
+rasterio, cryptography, pyarrow) and **automatically switches to MinGW64
+on Windows** when any are detected — even if you passed `--compiler=msvc`.
+
+If you hit C1002 on a project the guard didn't catch:
+1. Note the module name from the failing `.c` file path.
+2. Append it to `HEAVY_MODULES` in `build.py`.
+3. Rebuild — it will now route to MinGW64 automatically.
+
+To override the guard (you'd better have a reason): `--force-msvc`.
+
+To opt back into per-project nofollow as a project-specific override:
+add `nofollow_imports = ["pymupdf.mupdf"]` to your `build_config.toml`.
 
 ### "patchelf not found" on Linux
 ```bash

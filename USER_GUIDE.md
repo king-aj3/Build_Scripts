@@ -102,13 +102,18 @@ Open `build_config.toml` and:
 - Add anything Nuitka's static analysis won't see — dynamic imports
   (`importlib`, `__import__`, plugin loaders) — to `include_modules` or
   `include_packages`
-- Add huge-C-file workarounds to `nofollow_imports` (e.g. `pymupdf.mupdf`)
+- **You usually don't need to touch `nofollow_imports`.** Modules known
+  to crash MSVC (pymupdf, opencv-python, tensorflow, torch, scipy,
+  pandas, lxml, shapely, rasterio, cryptography, pyarrow) are handled
+  automatically by the build script's HEAVY_MODULES guard — it forces
+  MinGW64 on Windows so they compile cleanly. Only add to
+  `nofollow_imports` for project-specific dynamic-import edge cases.
 
 ```toml
 [nuitka]
 include_packages     = ["reportlab", "openpyxl"]
 include_modules      = ["ui.dynamic_loader"]
-nofollow_imports     = ["pymupdf.mupdf"]
+nofollow_imports     = []   # rarely needed
 ```
 
 ### Step 3 — Bundle data files
@@ -259,7 +264,68 @@ auto-detect.
 
 ---
 
-## 6. CI / GitHub Actions
+## 7. Heavy-module guard (Windows)
+
+Some Python packages generate C files so large they crash MSVC with one
+of:
+
+- `C1002` — "compiler is out of heap space in pass 2"
+- `C1060` — "compiler is out of heap space" (LTCG)
+- `LNK1102` — linker out of memory
+
+The build script keeps a `HEAVY_MODULES` registry in `build.py` of
+packages empirically known to trigger this:
+
+> `pymupdf`, `fitz`, `opencv-python`, `opencv-contrib-python`, `cv2`,
+> `tensorflow`, `tensorflow-cpu`, `tensorflow-gpu`, `torch`, `scipy`,
+> `pandas`, `lxml`, `shapely`, `rasterio`, `cryptography`, `pyarrow`
+
+Before each build the script scans:
+
+1. `requirements.txt`
+2. `pyproject.toml` `[project].dependencies` and `optional-dependencies`
+3. Top-level `import` / `from X import …` statements in the entry file
+
+If **any** match is found:
+
+- `--compiler=auto` → silently picks `mingw64` (with an info log).
+- `--compiler=msvc` → **auto-switches** to `mingw64` and warns.
+- `--force-msvc`    → **overrides everything** (including `--compiler=auto`
+  and the guard); forces MSVC. Windows-only. Expect the build to fail
+  with C1002 if the project genuinely needs MinGW64.
+
+> Precedence: `--force-msvc` > `--compiler=auto` resolution > heavy-module
+> auto-switch. `--force-msvc` does **not** require `--compiler=msvc` to
+> also be passed.
+
+### See what was detected
+
+```bash
+python build.py . --info     # shows "Heavy modules: ..." line
+python build.py . --audit    # has a [heavy modules] section
+```
+
+### Add a new entry when you hit a fresh MSVC failure
+
+1. Open `build.py`, find `HEAVY_MODULES = {…}`.
+2. Append the import name (and the pip distribution name if different).
+3. Rebuild — the guard will route to MinGW64 automatically.
+
+```python
+HEAVY_MODULES = {
+    "pymupdf", "fitz",
+    "opencv-python", "cv2",
+    # ... existing entries ...
+    "your-new-offender",  # add here
+}
+```
+
+No project-specific config changes needed. The single common script
+protects every project.
+
+---
+
+## 8. CI / GitHub Actions
 
 ```yaml
 - uses: actions/checkout@v4

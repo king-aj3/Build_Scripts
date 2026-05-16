@@ -28,9 +28,24 @@ All build artefacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the
 | Setting           | Default               | Override                                |
 | ----------------- | --------------------- | --------------------------------------- |
 | Build mode        | `--onefile`           | `--standalone`                          |
-| Compiler (Win)    | `--compiler=mingw64`  | `--compiler=msvc` or `--compiler=clang` |
+| Compiler (Win)    | `--compiler=auto`     | `--compiler=msvc\|mingw64\|clang`       |
+| Heavy-module guard| ON (auto-pick MinGW64)| `--force-msvc` (NOT recommended)        |
 | Python            | Highest stable 3.10–3.14 | `--python /path/to/python`           |
 | Parallel jobs     | CPU count             | `--jobs N`                              |
+
+### Heavy-module guard
+
+Some Python packages (pymupdf, opencv-python, tensorflow, torch, scipy,
+pandas, lxml, shapely, rasterio, cryptography, pyarrow) generate huge C
+files that crash MSVC with `C1002` / `C1060` / `LNK1102`. The script
+scans `requirements.txt`, `pyproject.toml`, and the entry-point's imports
+for these and **auto-selects MinGW64** when any are detected — even if
+the user passed `--compiler=msvc`. Override with `--force-msvc` if you
+truly want to try MSVC anyway.
+
+See `PROJECT_MEMORY.md` for the full list and the reasoning, and
+`build.py`'s `HEAVY_MODULES` constant to append new entries when you hit
+the next one in the wild.
 
 ---
 

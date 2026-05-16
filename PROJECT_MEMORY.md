@@ -107,7 +107,88 @@ generated comments in the TOML guide the user to fill in the rest, and
 
 ---
 
-## Why `--compiler=auto` is the default (v1.4.0)
+## Why HEAVY_MODULES exists (v1.5.0)
+
+Two of the three predecessors hit MSVC `C1002` ("compiler is out of heap
+space in pass 2") on `module.pymupdf.mupdf.c` (~2.2M lines). Each
+project had to learn the workaround independently:
+
+- PromptForge added `--nofollow-import-to=pymupdf.mupdf` to its build
+  script after a multi-hour debugging session.
+- A new Thrift_Reseller project hit the exact same failure in 2026 —
+  same module, same error, zero institutional memory carried forward.
+
+Pure-config solutions (`nofollow_imports` in TOML) fix it once per
+project but require every future project owner to:
+
+1. Run a doomed 5-15 minute MSVC build.
+2. Read the C1002 error and figure out it's a heap-exhaustion failure.
+3. Find the offending module name in the generated `.c` path.
+4. Discover `nofollow_imports` exists, edit the TOML, rebuild.
+
+The `HEAVY_MODULES` set in `build.py` shortcuts all four steps for the
+known offenders. Detection is cheap (~10ms) and runs before every build.
+When a hit is found, the script forces MinGW64 instead of MSVC — which
+handles million-line TUs without complaint — and prints a one-line note
+explaining why. New projects using pymupdf/opencv/torch/etc. now build
+on first try without any project-specific config edits.
+
+### Detection sources
+
+Three sources, all cheap:
+
+1. **`requirements.txt`** — line-by-line, strip comments + version
+   specifiers + extras (`foo[extra]>=1.0` → `foo`).
+2. **`pyproject.toml`** `[project].dependencies` and
+   `[project.optional-dependencies]` (all groups). Catches projects that
+   declare deps in pyproject only.
+3. **Entry file top-level imports** — regex scan for `^\s*(?:from|import)\s+(\w+)`.
+   No AST, no execution. Catches projects that vendor deps or pull
+   them in via something other than pip (system packages, conda).
+
+All three together give belt-and-suspenders coverage. The cost of a
+false positive (mingw64 build when MSVC would have worked) is small
+(MinGW64 binaries are fine); the cost of a false negative (MSVC chosen
+when it can't handle the project) is a 5-15 minute wasted compile.
+
+### Why auto-switch even when user said `--compiler=msvc`
+
+Considered three behaviours when explicit MSVC + heavy module collide:
+
+- **(A) Hard error** — safe but annoying; user has to learn the
+  workaround instead of just getting a working build.
+- **(B) Auto-switch with a warning** — *chosen.* The build succeeds;
+  the warning makes clear what happened; `--force-msvc` exists for
+  users who want MSVC anyway.
+- **(C) Just warn, respect the choice** — produces the C1002 failure
+  the guard exists to prevent. Defeats the point.
+
+(B) wins because the goal of this script is "every project just builds,
+without per-project debugging." Override path is one CLI flag.
+
+### Why the set is conservative
+
+`HEAVY_MODULES` errs on the side of **including** packages even when
+MSVC sometimes succeeds on them (pandas is the borderline case). A
+false positive costs nothing — MinGW64 produces the same binary. A
+false negative wastes a 5-15 minute build and surfaces a cryptic
+compiler error. Asymmetric cost → asymmetric default.
+
+### When to append a new entry
+
+Whenever a build fails on MSVC with `C1002`, `C1060`, or `LNK1102`, and
+the failing `.c` file path identifies a Python package:
+
+1. Add the package's import name AND its pip distribution name (if
+   different) to `HEAVY_MODULES`.
+2. Add a one-line comment explaining why.
+3. Commit. Every project gets the fix.
+
+Never remove an entry — see "asymmetric cost" above.
+
+---
+
+## Why `--compiler=auto` is the default (v1.4.0, refined in v1.5.0)
 
 The previous default (`mingw64`) optimized for "smallest auto-installable
 compiler", which was correct on Python ≤3.12 — MinGW64 is small,
@@ -233,14 +314,24 @@ CI should pre-install Python via `setup-python` action).
 
 ## What to NOT change without thinking
 
-1. **The `nofollow_imports` mechanism.** Removing it will break PromptForge
-   on MSVC. Keep it even if you switch defaults.
-2. **The PyQt6 auto-uninstall** when PySide6 is the configured plugin.
-   Nuitka picks up whichever it imports first; uninstalling PyQt6 from the
-   build env is the only reliable fix.
-3. **Project-local artefact paths.** Cross-project parallel builds depend
+1. **The `nofollow_imports` mechanism.** Removing it will break any
+   project that uses it for project-specific dynamic-import dead-code
+   elimination. Keep it even though `HEAVY_MODULES` handles the common
+   pymupdf case.
+2. **The `HEAVY_MODULES` set.** Don't shrink it. The cost of a false
+   positive (MinGW64 build instead of MSVC) is much smaller than a
+   false negative (MSVC C1002 crash after a 10-min compile). When in
+   doubt, add an entry; never remove one.
+3. **The auto-switch behaviour on explicit `--compiler=msvc` + heavy
+   modules.** Some users will be surprised the script overrides their
+   choice. The escape hatch (`--force-msvc`) is the right pressure
+   valve; removing the auto-switch defeats the guard's purpose.
+4. **The PyQt6 auto-uninstall** when PySide6 is the configured plugin.
+   Nuitka picks up whichever it imports first; uninstalling PyQt6 from
+   the build env is the only reliable fix.
+5. **Project-local artefact paths.** Cross-project parallel builds depend
    on these being unique-per-project.
-4. **The `--onefile` / `--standalone` mutual exclusion.** They produce
+6. **The `--onefile` / `--standalone` mutual exclusion.** They produce
    different outputs and downstream tooling distinguishes them.
 
 ---

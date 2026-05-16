@@ -1,9 +1,48 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.4.0
-**Date:** 2026-05-15
+**Script version:** 1.5.1
+**Date:** 2026-05-16
 **License:** Internal use
+
+## What's new in 1.5.1
+
+- **Fix: `--force-msvc` had no effect with `--compiler=auto`** (the
+  default). The compiler-resolution logic checked `--compiler=auto`
+  first and called the auto-resolver, which selected MinGW64 for heavy
+  modules without ever consulting `force_msvc`. `--force-msvc` only
+  worked when `--compiler=msvc` was *also* passed explicitly. It now
+  takes precedence over `--compiler=auto` and over the heavy-module
+  guard, as documented. On non-Windows it is ignored with a warning.
+
+## What's new in 1.5.0
+
+- **Heavy-module guard.** Before each build, the script scans
+  `requirements.txt`, `pyproject.toml` dependencies (including
+  optional-dependencies), and the entry file's top-level imports for
+  packages in the new `HEAVY_MODULES` registry (`pymupdf`, `fitz`,
+  `opencv-python`, `cv2`, `tensorflow`, `torch`, `scipy`, `pandas`,
+  `lxml`, `shapely`, `rasterio`, `cryptography`, `pyarrow`, plus the
+  `-cpu` / `-gpu` variants where applicable). When any match is
+  detected, the script forces `--compiler=mingw64` on Windows — even if
+  the user explicitly passed `--compiler=msvc` — because MSVC's pass-2
+  heap (and LTCG, and the linker) cannot handle the multi-million-line
+  generated C from these modules (`C1002` / `C1060` / `LNK1102`).
+- **`--force-msvc` escape hatch** for the rare case where the user
+  knows the failure mode and wants to try MSVC anyway.
+- **`--info` and `--audit`** both now report whether heavy modules were
+  detected, so it's obvious which compiler the build will pick before
+  it starts.
+- **`--init`-generated configs** no longer suggest manually adding
+  `pymupdf.mupdf` to `nofollow_imports` — the guard handles it. Comment
+  in the generated TOML explains that `nofollow_imports` is now only
+  needed for project-specific dynamic-import edge cases.
+- Rationale: one of the three predecessor projects (PromptForge) needed
+  `nofollow_imports = ["pymupdf.mupdf"]` to survive MSVC. Without the
+  guard, every new project using pymupdf or its siblings would re-hit
+  the same C1002 failure and require the same manual workaround. The
+  guard centralises that knowledge in the common script so no project
+  ever has to learn this lesson again.
 
 ## What's new in 1.4.0
 
