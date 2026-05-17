@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.5.1"
+SCRIPT_VERSION    = "1.7.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -84,50 +84,41 @@ _ICON_MAC  = ["assets/icon.icns", "resources/icon.icns", "icon.icns"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  HEAVY MODULES REGISTRY
+#  HEAVY-C MODULE REGISTRY
 # ═════════════════════════════════════════════════════════════════════════════
 #
-# Modules empirically known to break MSVC during C compilation/link:
-#   - C1002   "compiler is out of heap space in pass 2"  (huge translation units)
-#   - C1060   "compiler is out of heap space"             (LTCG)
-#   - LNK1102 "out of memory"                              (linker)
+# Packages (by import name OR pip distribution name) that ship huge generated
+# C/C++ *source* which Nuitka recompiles into one enormous translation unit.
+# MSVC's compiler dies on these:
+#   - C1002   "compiler is out of heap space in pass 2"
+#   - C1060   "compiler is out of heap space" (LTCG)
 #
-# When ANY of these are detected in a project's deps/imports, the build script
-# refuses to use MSVC and switches to MinGW64 (which handles giant TUs fine).
-# Override with --force-msvc if you must.
+# IMPORTANT - this is NOT "any large package". opencv-python, tensorflow,
+# torch, scipy, pandas, etc. ship *prebuilt* extension modules (.pyd / .so) in
+# their wheels. Nuitka copies those as-is and never recompiles them, so they
+# DO NOT cause C1002. Only packages shipping compilable C source belong here.
 #
-# Why each is here:
-#   pymupdf       module.pymupdf.mupdf.c is ~2.2M lines (the canonical case)
-#   fitz          legacy import alias for pymupdf
-#   cv2 / opencv  large generated wrappers
-#   tensorflow    very large native ext; LTCG fails routinely
-#   torch         see tensorflow
-#   scipy         Fortran-derived TUs, MSVC LTCG memory pressure
-#   pandas        Cython output is large; mixed reports but safer on mingw64
-#   lxml          libxml2/libxslt bindings, big generated C
-#   shapely       geos bindings, large
-#   rasterio      GDAL bindings, very large
-#   cryptography  openssl bindings, large + LTCG issues
-#   pyarrow       arrow C++ bindings, huge
+# pymupdf is the canonical (and rare) case: it ships `mupdf.c`, a SWIG-
+# generated ~2.2M-line file. Nuitka recompiles it; MSVC's pass-2 heap blows up.
 #
-# Detection matches case-insensitively against both import names and pip
+# What the build script does when it finds one of these in a project:
+#   It routes the build to MinGW64 (--compiler=auto -> mingw64). GCC/MinGW64
+#   compiles the giant translation unit without trouble where MSVC cannot.
+#   The module IS compiled and bundled normally - the build is just slow.
+#
+#   It does NOT use --nofollow-import-to. That was tried (v1.6.0) and was
+#   wrong: --nofollow-import-to *excludes* the module from a standalone build,
+#   producing an .exe that crashes at startup with ImportError. See
+#   PROJECT_MEMORY.md "Heavy-C modules: the design and how it changed".
+#
+# Detection matches case-insensitively against import names and pip
 # distribution names (with -/_ normalisation).
 #
-# Append to this set when you hit a new C1002/C1060/LNK1102 on MSVC. Never
-# remove an entry — a false positive (mingw64 build) is far cheaper than a
-# false negative (a 15-min MSVC compile that explodes at the very end).
-HEAVY_MODULES: set = {
-    "pymupdf", "fitz",
-    "opencv-python", "opencv-contrib-python", "cv2",
-    "tensorflow", "tensorflow-cpu", "tensorflow-gpu",
-    "torch",
-    "scipy",
-    "pandas",
-    "lxml",
-    "shapely",
-    "rasterio",
-    "cryptography",
-    "pyarrow",
+# To add a new offender: add its import name (and pip distribution name if
+# different). A false positive only costs a slower MinGW64 build.
+HEAVY_C_MODULES: set = {
+    "pymupdf",   # ships SWIG-generated mupdf.c, ~2.2M lines
+    "fitz",      # legacy import alias for pymupdf
 }
 
 
@@ -566,21 +557,20 @@ def _install_msvc() -> bool:
     return False
 
 
-def detect_heavy_modules(project_dir: Path, cfg: "Config") -> list:
-    """Scan the project for any HEAVY_MODULES that would break MSVC.
+def detect_heavy_c_modules(project_dir: Path, cfg: "Config") -> list:
+    """Scan the project for HEAVY_C_MODULES (packages shipping huge C source).
 
     Sources scanned (cheap, ~10ms total):
       1.  requirements.txt
       2.  pyproject.toml [project].dependencies and optional-dependencies
       3.  Top-level `import` / `from X import ...` statements in the entry file
 
-    Returns a sorted, deduplicated list of matched names (in their
-    HEAVY_MODULES canonical form). Empty list = nothing risky detected.
+    Returns a sorted list of matched package names. Empty = nothing found.
     """
     import re
     hits: set = set()
-    # Build a normalised lookup for HEAVY_MODULES: "opencv-python" -> "opencv-python"
-    canon = {hm.lower().replace("-", "_"): hm for hm in HEAVY_MODULES}
+    # Normalised lookup: "pymupdf" / "fitz"
+    canon = {m.lower().replace("-", "_") for m in HEAVY_C_MODULES}
 
     def _check(token: str):
         t = token.strip().lower()
@@ -590,7 +580,7 @@ def detect_heavy_modules(project_dir: Path, cfg: "Config") -> list:
                 t = t.split(sep, 1)[0]
         t = t.strip().replace("-", "_")
         if t and t in canon:
-            hits.add(canon[t])
+            hits.add(t)
 
     # 1. requirements.txt
     req = project_dir / REQUIREMENTS_NAME
@@ -630,23 +620,27 @@ def detect_heavy_modules(project_dir: Path, cfg: "Config") -> list:
     return sorted(hits)
 
 
-def _resolve_compiler_auto(auto_yes: bool = False, heavy: list | None = None) -> str:
+def _resolve_compiler_auto(auto_yes: bool = False, heavy_c: list | None = None) -> str:
     """
     Resolve --compiler=auto to a concrete compiler on Windows.
 
-    Tier 0: HEAVY_MODULES detected   -> "mingw64" (MSVC would die with C1002)
-    Tier 1: MSVC already installed   -> "msvc"   (best with Python 3.13)
+    Tier 0: heavy-C modules present  -> "mingw64" (MSVC cannot compile them;
+            GCC/MinGW64 handles the giant translation unit)
+    Tier 1: MSVC already installed   -> "msvc"
     Tier 2: MSVC missing, user agrees to install + install OK -> "msvc"
     Tier 3: anything else            -> "mingw64" (will use Python <3.13)
     """
     if not IS_WIN:
         return ""   # Linux/macOS: no compiler flag, system default is used
 
-    # Tier 0 — heavy modules guarantee MSVC failure, skip it entirely.
-    if heavy:
-        warn(f"Heavy modules detected: {', '.join(heavy)}")
-        info("These trigger MSVC heap exhaustion (C1002 / C1060 / LNK1102).")
-        info("Selecting --compiler=mingw64 (override with --force-msvc).")
+    # Tier 0 - heavy-C modules need MinGW64. MSVC dies with C1002 on the
+    # giant translation unit, and excluding the module breaks the standalone
+    # build. MinGW64/GCC compiles it cleanly (slowly). No way around it.
+    if heavy_c:
+        warn(f"Heavy-C modules detected: {', '.join(heavy_c)}")
+        info("MSVC cannot compile these (C1002); selecting --compiler=mingw64.")
+        info("The build will be slow - GCC must compile a multi-million-line")
+        info("translation unit - but it produces a working standalone exe.")
         return "mingw64"
 
     if _msvc_available():
@@ -1008,8 +1002,13 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
         cmd.append(f"--include-package-data={pkg}")
     for mod in cfg.include_modules:
         cmd.append(f"--include-module={mod}")
+    # nofollow: only modules the user explicitly declared in build_config.toml.
+    # The script does NOT auto-add nofollow for heavy-C modules - excluding a
+    # module breaks a standalone build (ImportError at runtime). Heavy-C
+    # modules are handled by routing to MinGW64, which compiles them.
     for imp in cfg.nofollow_imports:
-        cmd.append(f"--nofollow-import-to={imp}")
+        if imp:
+            cmd.append(f"--nofollow-import-to={imp}")
 
     for entry in cfg.data_files:
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
@@ -1041,8 +1040,11 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
     elif cfg.lto == "no":
         lto = "no"
     else:  # auto
-        # MSVC's LTCG runs out of heap on huge generated C (e.g. mupdf).
-        # Be conservative on Windows + MSVC.
+        # LTO holds the whole program in memory during the final link.
+        # On Windows+MSVC it can exhaust LTCG; keep it off there. Heavy-C
+        # modules are now handled by --nofollow-import-to (the giant TU is
+        # never compiled), so LTO is no longer the heavy-module concern it
+        # was - but staying conservative on Win+MSVC costs little.
         lto = "no" if (IS_WIN and compiler == "msvc") else "yes"
     cmd.append(f"--lto={lto}")
 
@@ -1101,49 +1103,52 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
 # ═════════════════════════════════════════════════════════════════════════════
 
 def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
-              jobs: int, forced_python=None, ci: bool = False,
+              jobs: int | None = None, forced_python=None, ci: bool = False,
               auto_yes: bool = False, force_msvc: bool = False) -> bool:
-    # ── Heavy-module detection (cheap, run before any compiler decision) ──
-    heavy = detect_heavy_modules(project_dir, cfg)
+    # ── Heavy-C module detection ──────────────────────────────────────────
+    # Packages that ship huge C source MSVC cannot compile (C1002). The build
+    # is routed to MinGW64, which compiles them - slowly but correctly. The
+    # module IS compiled and bundled; we do NOT exclude it (that breaks the
+    # standalone exe).
+    heavy_c = detect_heavy_c_modules(project_dir, cfg)
+
+    # ── Resolve parallel C-compile jobs ───────────────────────────────────
+    # jobs is None -> not set explicitly: default to CPU count.
+    # jobs is int  -> user passed --jobs N explicitly: honour it exactly.
+    if jobs is None:
+        jobs = multiprocessing.cpu_count()
 
     # ── Resolve the compiler ──────────────────────────────────────────────
-    # Precedence (highest first):
-    #   1. --force-msvc            -> MSVC, no matter what (Windows only)
-    #   2. --compiler=auto         -> tiered resolution (heavy modules -> mingw64)
-    #   3. --compiler=msvc + heavy -> auto-switch to mingw64 (unless force_msvc)
-    #   4. otherwise               -> use the explicit --compiler value as-is
+    # Precedence: --force-msvc > --compiler=auto resolution > explicit value.
+    # --compiler=auto routes heavy-C projects to MinGW64 (see
+    # _resolve_compiler_auto Tier 0).
     if force_msvc and IS_WIN:
-        # --force-msvc is an explicit override; it wins over --compiler=auto
-        # AND over the heavy-module guard. The user is telling us they know.
         if compiler not in ("auto", "msvc"):
             warn(f"--force-msvc overrides --compiler={compiler}.")
         compiler = "msvc"
-        if heavy:
-            warn(f"Heavy modules detected: {', '.join(heavy)}")
-            warn("--force-msvc is set; proceeding with MSVC anyway.")
-            warn("Build may fail with C1002 / C1060 / LNK1102. You were warned.")
     elif force_msvc and not IS_WIN:
         warn("--force-msvc is Windows-only; ignoring on this platform.")
         if compiler == "auto":
-            compiler = _resolve_compiler_auto(auto_yes=auto_yes, heavy=heavy)
+            compiler = _resolve_compiler_auto(auto_yes=auto_yes, heavy_c=heavy_c)
     elif compiler == "auto":
-        compiler = _resolve_compiler_auto(auto_yes=auto_yes, heavy=heavy)
-    elif compiler == "msvc" and heavy:
-        # Explicit --compiler=msvc without --force-msvc. Project has
-        # known-poisonous modules. Auto-switch to mingw64 + warn.
-        warn(f"Heavy modules detected: {', '.join(heavy)}")
-        warn("MSVC would almost certainly fail (C1002 / C1060 / LNK1102).")
-        info("Auto-switching to --compiler=mingw64.")
-        info("Pass --force-msvc to override (expect build failure).")
-        compiler = "mingw64"
+        compiler = _resolve_compiler_auto(auto_yes=auto_yes, heavy_c=heavy_c)
+
+    # Heavy-C + MSVC is a guaranteed failure - warn loudly.
+    if heavy_c and IS_WIN and compiler == "msvc":
+        warn(f"Heavy-C modules present ({', '.join(heavy_c)}) and compiler is "
+             f"MSVC.")
+        warn("MSVC cannot compile these - the build will fail with C1002.")
+        warn("Use --compiler=mingw64 (or --compiler=auto) for this project.")
 
     mode = "One-File" if onefile else "Standalone Folder"
     banner(f"{cfg.name} v{cfg.version} - Nuitka Build ({mode})")
     say(f"  Project   : {project_dir}")
     say(f"  Platform  : {OS_NAME} {OS_ARCH}")
     say(f"  Compiler  : {compiler if IS_WIN else 'system default'}")
-    if heavy:
-        say(f"  Heavy mods: {', '.join(heavy)}")
+    if heavy_c:
+        say(f"  Heavy-C   : {', '.join(heavy_c)}")
+        say(f"              compiled normally on {compiler} "
+            f"(slow but produces a working exe)")
     say(f"  Entry     : {cfg.entry}\n")
 
     check_compiler(compiler)
@@ -1171,15 +1176,37 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
     info("Compiling (typically 5-15 min)...")
     say("-" * 60)
 
-    r = subprocess.run(cmd, cwd=str(project_dir), env=_nuitka_env())
-    if r.returncode != 0:
+    # Stream Nuitka's stdout/stderr line-by-line so it lands in BOTH the
+    # console and build.log. subprocess.run() inherited the console only,
+    # which left build.log with no diagnostic detail after a failure.
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=str(project_dir), env=_nuitka_env(),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            say(line.rstrip("\r\n"))
+        proc.wait()
+        returncode = proc.returncode
+    except Exception as e:
+        error(f"Failed to launch Nuitka: {e}")
+        returncode = 1
+
+    if returncode != 0:
         banner("BUILD FAILED")
+        say("  Full compiler output captured above and in build.log.")
         say("  Try:  python build.py <project> --clean --clean-env --onefile")
         if IS_WIN:
-            say("        On Windows, --compiler=mingw64 is most reliable for")
-            say("        heavy-C modules (pymupdf, opencv, tensorflow, ...).")
-            if heavy and force_msvc:
-                say("        (Heavy modules + --force-msvc was used. Drop --force-msvc.)")
+            if heavy_c and compiler == "msvc":
+                say("        Heavy-C module on MSVC -> C1002 is expected.")
+                say("        Rebuild with --compiler=mingw64 (or --compiler=auto).")
+            if compiler == "mingw64":
+                say("        MinGW64 build failed early (e.g. corecrt.h errors)?")
+                say("        Nuitka's downloaded GCC may be corrupt. Delete:")
+                say('          %LOCALAPPDATA%\\Nuitka\\Nuitka\\Cache\\downloads\\gcc')
+                say("        then rebuild - Nuitka re-downloads a fresh copy.")
         return False
 
     step("Collecting output...")
@@ -1379,11 +1406,11 @@ def init_config(project_dir: Path, force: bool = False,
     L.append("include_packages = []")
     L.append("include_modules  = []")
     L.append("")
-    L.append("# nofollow_imports = exclude modules from Nuitka compilation entirely.")
-    L.append("# NOTE: pymupdf.mupdf and other heavy C modules are now handled")
-    L.append("# automatically by the build script's HEAVY_MODULES guard - it forces")
-    L.append("# MinGW64 on Windows so they compile cleanly. You only need to add")
-    L.append("# entries here for project-specific dynamic-import edge cases.")
+    L.append("# nofollow_imports = exclude modules from the build entirely.")
+    L.append("# WARNING: a nofollow'd module is NOT bundled - importing it in")
+    L.append("# a standalone build raises ImportError at runtime. Use only for")
+    L.append("# modules genuinely not needed at runtime. pymupdf is handled")
+    L.append("# automatically (build routes to MinGW64); do NOT list it here.")
     L.append("nofollow_imports = []")
     L.append("")
     if detected_dirs:
@@ -1593,13 +1620,14 @@ def audit(project_dir: Path, cfg: Config) -> bool:
         warn(f"MISS  {cfg.entry} (entry point does not exist)")
         issues += 1
 
-    # 6. Heavy modules (informational; not an issue)
-    say("\n  [heavy modules]")
-    heavy = detect_heavy_modules(project_dir, cfg)
-    if heavy:
-        info(f"Detected: {', '.join(heavy)}")
-        say("        On Windows the build will force --compiler=mingw64.")
-        say("        Override with --force-msvc (expect C1002 failure).")
+    # 6. Heavy-C modules (informational; not an issue)
+    say("\n  [heavy-C modules]")
+    heavy_c = detect_heavy_c_modules(project_dir, cfg)
+    if heavy_c:
+        info(f"Detected: {', '.join(heavy_c)}")
+        say("        On Windows the build is routed to MinGW64 (MSVC cannot")
+        say("        compile these). The build is slow but produces a working")
+        say("        standalone exe. --compiler=auto handles this.")
     else:
         info("None detected.")
 
@@ -1633,12 +1661,12 @@ def show_info(project_dir: Path, cfg: Config):
     say(f"  Includes (mods)  : {len(cfg.include_modules)}")
     say(f"  Data files       : {len(cfg.data_files)}")
     say(f"  Data dirs        : {len(cfg.data_dirs)}")
-    heavy = detect_heavy_modules(project_dir, cfg)
-    if heavy:
-        say(f"  Heavy modules    : {', '.join(heavy)}")
-        say(f"                     -> build will use MinGW64 on Windows")
+    heavy_c = detect_heavy_c_modules(project_dir, cfg)
+    if heavy_c:
+        say(f"  Heavy-C modules  : {', '.join(heavy_c)}")
+        say(f"                     -> build routes to MinGW64 (slow, but works)")
     else:
-        say(f"  Heavy modules    : (none detected)")
+        say(f"  Heavy-C modules  : (none detected)")
     say("")
     cur = sys.version_info
     ok = MIN_PYTHON <= (cur.major, cur.minor) <= MAX_PYTHON
@@ -1691,7 +1719,6 @@ def main():
               python build.py /path/to/project --standalone
               python build.py . --compiler=msvc           # force MSVC
               python build.py . --compiler=mingw64        # force MinGW64
-              python build.py . --force-msvc              # override heavy-module guard
               python build.py . --yes                     # auto-accept install prompts
               python build.py . --clean --clean-env
               python build.py . --info
@@ -1709,12 +1736,13 @@ def main():
     # Compiler
     parser.add_argument("--compiler", choices=["auto", "mingw64", "msvc", "clang"],
                         default="auto",
-                        help="C compiler (Windows). Default 'auto': MSVC if "
+                        help="C compiler (Windows). Default 'auto': MinGW64 for "
+                             "heavy-C projects (pymupdf), else MSVC if "
                              "installed/installable, else MinGW64 + Python 3.12.")
     parser.add_argument("--force-msvc", action="store_true",
-                        help="Override the heavy-module guard and use MSVC even "
-                             "when modules known to crash MSVC (pymupdf, etc.) "
-                             "are detected. Expect C1002 / C1060 / LNK1102.")
+                        help="Force MSVC on Windows regardless of --compiler. "
+                             "Will fail on heavy-C projects (pymupdf) with "
+                             "C1002 - use only on projects without them.")
     # Operations
     parser.add_argument("--clean",      action="store_true", help="Remove build/dist first")
     parser.add_argument("--clean-env",  action="store_true", help="Also remove build_env")
@@ -1734,8 +1762,9 @@ def main():
                         help="Auto-accept install prompts (e.g., MSVC Build Tools)")
     parser.add_argument("--ci",         action="store_true", help="Use current Python, no venv")
     # Tuning
-    parser.add_argument("--jobs",   type=int, default=multiprocessing.cpu_count(),
-                        help="Parallel C jobs (default: CPU count)")
+    parser.add_argument("--jobs",   type=int, default=None,
+                        help="Parallel C jobs (default: CPU count, capped at 2 "
+                             "when heavy modules are present).")
     parser.add_argument("--python", metavar="PATH",
                         help="Force a specific Python interpreter")
     args = parser.parse_args()

@@ -1,9 +1,113 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.5.1
-**Date:** 2026-05-16
+**Script version:** 1.7.0
+**Date:** 2026-05-17
 **License:** Internal use
+
+## What's new in 1.7.0
+
+**Heavy-C handling corrected again — auto-nofollow removed.** v1.6.0's
+`--nofollow-import-to` approach was wrong: a nofollow'd module is
+*excluded* from a standalone build, so the resulting `.exe` crashed at
+startup with an ImportError (the app simply never opened). Nuitka's own
+documentation confirms nofollow causes a runtime ImportError in
+standalone mode.
+
+The corrected behaviour:
+
+- **No auto-nofollow.** The script never auto-adds `--nofollow-import-to`.
+  Heavy-C modules are *compiled and bundled normally*.
+- **Heavy-C projects route to MinGW64.** `--compiler=auto` now selects
+  MinGW64 when a heavy-C module (pymupdf) is detected. GCC/MinGW64
+  compiles the ~2.2M-line `mupdf.c` translation unit where MSVC's
+  pass-2 heap fails (`C1002`). The build is slow (~2 hrs for a pymupdf
+  project) but produces a genuinely standalone exe.
+- **Heavy-C + MSVC** now emits a hard warning — that combination cannot
+  succeed.
+- `--no-auto-nofollow` flag removed (obsolete).
+- `HEAVY_C_MODULES` is now a simple set of package names.
+- The "MinGW64 cannot work — Nuitka 4.1 can't drive GCC 15" claim from
+  v1.6.0 was **wrong**. The GCC-15 failure was a *corrupt download*.
+  Clearing Nuitka's GCC cache and re-downloading produced a clean GCC
+  that compiled the project successfully. The BUILD FAILED footer now
+  tells the user to clear `%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc`
+  if a MinGW64 build fails early with header errors.
+
+### Build-time expectation
+
+A pymupdf project on MinGW64 takes roughly 2–2.5 hours to build,
+because GCC must compile the multi-million-line `mupdf` translation
+unit. This is inherent to compiling pymupdf with Nuitka. Release builds
+are infrequent, so this is accepted; `lto = "no"` in `build_config.toml`
+trims some time if needed.
+
+## What's new in 1.6.0
+
+**Heavy-module strategy redesigned.** v1.5.0's approach — detect heavy
+modules and switch the compiler to MinGW64 — was based on a wrong
+assumption: that MinGW64 is a reliable fallback. It is not. Nuitka 4.1
+auto-downloads the newest winlibs GCC (currently 15.2.0) and **cannot
+drive GCC 15** — even MinGW's own CRT headers fail to parse
+(`corecrt.h: expected ';' before 'typedef'`). So routing heavy-module
+builds to MinGW64 sent them into a broken compiler.
+
+The redesign:
+
+- **`HEAVY_MODULES` (set) → `HEAVY_C_MODULES` (dict).** Maps a package
+  to the submodule that ships huge compilable C *source*. Currently just
+  `pymupdf` / `fitz` → `pymupdf.mupdf`.
+- **Corrected the criterion.** v1.5.0's list included opencv-python,
+  tensorflow, torch, scipy, pandas, lxml, etc. — but those ship
+  *prebuilt* `.pyd`/`.so` wheels. Nuitka copies them as-is and never
+  recompiles them, so they never caused `C1002`. Only packages shipping
+  compilable C source (pymupdf) belong here. The list is now accurate
+  rather than conservative.
+- **New action: auto-inject `--nofollow-import-to`.** When a heavy-C
+  module is detected, the script adds `--nofollow-import-to=<submodule>`
+  so Nuitka does not recompile the giant translation unit. The prebuilt
+  `.pyd` is bundled instead. **MSVC stays selected** — no compiler
+  switch, no MinGW64, no GCC-15 problem. This is the workaround
+  PromptForge already used, now automatic for every project.
+- **`--no-auto-nofollow`** disables the injection (Nuitka will then
+  recompile the module; MSVC may fail with `C1002`).
+- **Compiler resolution simplified.** `--compiler=auto` is again just
+  "MSVC if available, else MinGW64". Heavy modules no longer influence
+  it. `--force-msvc` remains but is rarely needed now.
+- **Detection deduplicates against `nofollow_imports`.** A target the
+  user already declared in `build_config.toml` is not injected twice.
+- LTO `auto` no longer keys on heavy modules (the giant TU is skipped
+  outright now); it stays off only on Windows+MSVC, as before.
+
+### MinGW64 status
+
+`--compiler=mingw64` still exists but, with Nuitka 4.1, will fail if
+Nuitka downloads GCC 15.x. To use MinGW64, put a GCC 13/14 toolchain on
+PATH so Nuitka uses that instead of downloading 15.x. For most Windows
+projects MSVC + auto-nofollow is now the recommended path.
+
+## What's new in 1.5.2
+
+- **LTO auto-disabled for heavy-module builds.** Link-time optimization
+  holds the whole program in memory during the final link; with heavy
+  modules (pymupdf, opencv, ...) this exhausts the linker on *both*
+  toolchains — MSVC LTCG (`C1060` / `LNK1102`) and MinGW64 `ld` alike.
+  `lto="auto"` now resolves to `no` whenever heavy modules are detected,
+  on any OS/compiler (previously only Windows+MSVC). An explicit
+  `lto="yes"` is still honoured but now warns when heavy modules are
+  present. This fixes MinGW64 builds that compiled for ~20 minutes and
+  then died at the link stage.
+- **Parallel C jobs capped at 2 for heavy-module builds.** Each huge
+  translation unit can use 2-4 GB of RAM during compilation; 4+ in
+  parallel can OOM the machine mid-compile. When `--jobs` is not given
+  explicitly, heavy-module builds now cap at 2. Pass `--jobs N` to
+  override (e.g. on a high-RAM machine).
+- **Nuitka output now captured in `build.log`.** The compile step ran
+  Nuitka as a subprocess whose stdout/stderr went only to the console;
+  `build.log` recorded the command but nothing about *why* a build
+  failed. Output is now streamed line-by-line to both the console and
+  `build.log`, so post-mortem diagnosis no longer needs the console
+  scrollback.
 
 ## What's new in 1.5.1
 

@@ -21,11 +21,11 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag                  | Notes                                                      |
 | --------------------- | ---------------------------------------------------------- |
-| `--compiler=auto`     | **Default.** MSVC if installed/installable, else MinGW64 + Python 3.12. |
-| `--compiler=mingw64`  | Force MinGW64. Auto-installs Python 3.12 if needed.        |
-| `--compiler=msvc`     | Force MSVC. Auto-detected via `vswhere`; aborts if missing.|
+| `--compiler=auto`     | **Default.** MinGW64 for heavy-C projects (pymupdf); else MSVC if installed/installable; else MinGW64 + Python 3.12. |
+| `--compiler=mingw64`  | Force MinGW64. Nuitka auto-downloads GCC. Required for pymupdf projects. |
+| `--compiler=msvc`     | Force MSVC. Auto-detected via `vswhere`; aborts if missing. Fails on pymupdf projects (`C1002`). |
 | `--compiler=clang`    | Use `clang.exe` if on PATH (needs MSVC SDK on Windows).    |
-| `--force-msvc`        | Override the heavy-module guard. Forces MSVC even with `--compiler=auto`. Windows-only. Use only if you know the project survives MSVC. |
+| `--force-msvc`        | Force MSVC regardless of `--compiler`. Do not use on pymupdf projects. |
 
 ## Operations
 
@@ -47,7 +47,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag            | Effect                                                  |
 | --------------- | ------------------------------------------------------- |
-| `--jobs N`      | Parallel C compile jobs. Default: CPU count.            |
+| `--jobs N`      | Parallel C compile jobs. Default: CPU count, capped at 2 when heavy modules are present. |
 | `--python PATH` | Force a specific interpreter (overrides auto-discovery).|
 
 ## Common recipes
@@ -86,23 +86,21 @@ With `--compiler=mingw64` (the default), Nuitka downloads MinGW64 on first
 build. If the download fails, switch to MSVC: `--compiler=msvc`. Or install
 MinGW64 via MSYS2: `winget install MSYS2.MSYS2`.
 
-### Build fails with "MSVC out of memory" / LTCG heap exhaustion / C1002
-Modules like `pymupdf.mupdf` compile to multi-million-line C files that
-exhaust MSVC's heap (`C1002` in pass 2, `C1060` LTCG, or `LNK1102` link).
-As of v1.5.0 the build script scans your project for **HEAVY_MODULES**
-(pymupdf, opencv-python, tensorflow, torch, scipy, pandas, lxml, shapely,
-rasterio, cryptography, pyarrow) and **automatically switches to MinGW64
-on Windows** when any are detected — even if you passed `--compiler=msvc`.
+### Build fails with "MSVC out of memory" / C1002 / C1060
+A package ships huge C *source* that Nuitka recompiled into one giant
+translation unit, exhausting MSVC's heap. `pymupdf` (`mupdf.c`, ~2.2M
+lines) is the usual cause. MSVC fundamentally cannot compile it.
 
-If you hit C1002 on a project the guard didn't catch:
-1. Note the module name from the failing `.c` file path.
-2. Append it to `HEAVY_MODULES` in `build.py`.
-3. Rebuild — it will now route to MinGW64 automatically.
+Fix: build with MinGW64. `--compiler=auto` does this automatically when
+it detects a heavy-C module; or pass `--compiler=mingw64` explicitly.
+Do not use `--compiler=msvc` / `--force-msvc` on such projects.
 
-To override the guard (you'd better have a reason): `--force-msvc`.
+If a *new* package triggers `C1002`, identify it from the failing
+`module.<name>.c` path and add its import name to `HEAVY_C_MODULES` in
+`build.py` — it will then route to MinGW64 automatically.
 
-To opt back into per-project nofollow as a project-specific override:
-add `nofollow_imports = ["pymupdf.mupdf"]` to your `build_config.toml`.
+Note: a pymupdf build on MinGW64 takes ~2 hours (GCC compiling the
+giant translation unit). That is expected.
 
 ### "patchelf not found" on Linux
 ```bash
@@ -130,6 +128,27 @@ If both are installed, Nuitka picks the wrong one. The build script
 auto-uninstalls PyQt6 from `build_env/` when PySide6 is the configured
 plugin. Set `plugins = ["pyqt6"]` in TOML to invert this.
 
-### Where's `build.log`?
-`<project_dir>/build.log` — full timestamped trail of every step. First place
-to look after a failure.
+### MinGW64 build fails early — CRT headers won't compile
+Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at
+the start of C compilation. Cause: **Nuitka's downloaded GCC is corrupt
+or incomplete** (a truncated download). It is not a project problem and
+not a Nuitka/GCC version incompatibility.
+Fix: delete Nuitka's cached compiler so it re-downloads a clean copy:
+```
+rmdir /s /q "%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc"
+```
+Then rebuild with `--clean --clean-env --compiler=mingw64`.
+
+### Built exe says "install pymupdf" / app does not open
+Cause: `pymupdf.mupdf` was excluded from the build via
+`--nofollow-import-to` (an approach used in v1.6.0, removed in v1.7.0).
+A nofollow'd module is not bundled, so the standalone exe crashes on
+`import pymupdf` — and with `--windows-console-mode=disable` it crashes
+silently (no window). Fix: ensure `pymupdf.mupdf` (or `pymupdf`) is NOT
+in `nofollow_imports` in `build_config.toml`, and rebuild with
+`--compiler=mingw64` (or `auto`). v1.7.0 compiles pymupdf normally.
+
+### Where's `build.log`, and does it have the compiler error?
+`<project_dir>/build.log`. As of v1.5.2 it captures the **full Nuitka
+output**, including the C compiler / linker error that caused a failure.
+First place to look after any failed build.

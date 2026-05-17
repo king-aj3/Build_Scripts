@@ -21,9 +21,11 @@ active, so a single file in a separate location can serve all of them.
 Pure auto-detection would silently lose project-specific knowledge that
 took real debugging effort to find:
 
-- `PromptForge` needs `--nofollow-import-to=pymupdf.mupdf` because that
-  module generates a 2M-line C file that exhausts MSVC's LTCG heap. No
-  amount of project scanning can infer this.
+- `PromptForge` uses `pymupdf`, which ships a ~2.2M-line generated C
+  file (`mupdf.c`). MSVC cannot compile it; the build must use MinGW64.
+  The build script detects pymupdf and routes to MinGW64 automatically
+  (see the heavy-C history below) — but the *fact* that the project
+  needs that handling is project knowledge worth recording.
 - `Thrift` needs ~35 explicit `--include-module=...` flags because its UI
   loads tabs and parsers via dynamic `importlib` calls. Nuitka cannot
   statically detect them.
@@ -107,88 +109,98 @@ generated comments in the TOML guide the user to fill in the rest, and
 
 ---
 
-## Why HEAVY_MODULES exists (v1.5.0)
+## Heavy-C modules: the full design history (v1.5.0 → v1.7.0)
 
-Two of the three predecessors hit MSVC `C1002` ("compiler is out of heap
-space in pass 2") on `module.pymupdf.mupdf.c` (~2.2M lines). Each
-project had to learn the workaround independently:
+This section records a design that was wrong **twice** before landing.
+The wrong versions are kept deliberately — the mistakes are instructive
+and must not be reinstated.
 
-- PromptForge added `--nofollow-import-to=pymupdf.mupdf` to its build
-  script after a multi-hour debugging session.
-- A new Thrift_Reseller project hit the exact same failure in 2026 —
-  same module, same error, zero institutional memory carried forward.
+### The problem
 
-Pure-config solutions (`nofollow_imports` in TOML) fix it once per
-project but require every future project owner to:
+pymupdf ships `mupdf.c`, a SWIG-generated ~2.2M-line file. Nuitka
+recompiles it into one translation unit. MSVC's pass-2 code generator
+runs out of heap on it (`C1002`). MinGW64/GCC compiles it fine (it's a
+64-bit toolchain without that limit) — just slowly.
 
-1. Run a doomed 5-15 minute MSVC build.
-2. Read the C1002 error and figure out it's a heap-exhaustion failure.
-3. Find the offending module name in the generated `.c` path.
-4. Discover `nofollow_imports` exists, edit the TOML, rebuild.
+### v1.5.0 (WRONG) — switch to MinGW64, overbroad list
 
-The `HEAVY_MODULES` set in `build.py` shortcuts all four steps for the
-known offenders. Detection is cheap (~10ms) and runs before every build.
-When a hit is found, the script forces MinGW64 instead of MSVC — which
-handles million-line TUs without complaint — and prints a one-line note
-explaining why. New projects using pymupdf/opencv/torch/etc. now build
-on first try without any project-specific config edits.
+Detected "heavy" modules and switched the compiler to MinGW64. Two
+mistakes: (1) the list included opencv/torch/tensorflow/scipy/pandas —
+but those ship *prebuilt* wheels Nuitka never recompiles, so they never
+caused `C1002`; (2) the MinGW64 build then failed, and that failure was
+misread (see v1.6.0).
 
-### Detection sources
+### v1.6.0 (WRONG) — auto-nofollow + stay on MSVC
 
-Three sources, all cheap:
+The v1.5.0 MinGW64 build failed with `corecrt.h` errors. This was
+**misdiagnosed** as "Nuitka 4.1 cannot drive GCC 15.x". Based on that
+false conclusion, v1.6.0 abandoned MinGW64 and instead auto-injected
+`--nofollow-import-to=pymupdf.mupdf` to keep MSVC viable.
 
-1. **`requirements.txt`** — line-by-line, strip comments + version
-   specifiers + extras (`foo[extra]>=1.0` → `foo`).
-2. **`pyproject.toml`** `[project].dependencies` and
-   `[project.optional-dependencies]` (all groups). Catches projects that
-   declare deps in pyproject only.
-3. **Entry file top-level imports** — regex scan for `^\s*(?:from|import)\s+(\w+)`.
-   No AST, no execution. Catches projects that vendor deps or pull
-   them in via something other than pip (system packages, conda).
+That was also wrong. `--nofollow-import-to` *excludes* a module from the
+build. Nuitka's own docs state a nofollow'd module raises ImportError at
+runtime in standalone mode. The v1.6.0 build "succeeded" but the exe
+crashed silently on startup (console disabled → no visible error) — the
+user reported "app does not open" and "says to install pymupdf".
 
-All three together give belt-and-suspenders coverage. The cost of a
-false positive (mingw64 build when MSVC would have worked) is small
-(MinGW64 binaries are fine); the cost of a false negative (MSVC chosen
-when it can't handle the project) is a 5-15 minute wasted compile.
+### v1.7.0 (current) — route to MinGW64, compile normally
 
-### Why auto-switch even when user said `--compiler=msvc`
+A cheap diagnostic settled it: deleting Nuitka's GCC download cache and
+rebuilding produced a **clean GCC that compiled the whole project
+successfully**. So the v1.5.0 `corecrt.h` failure was a **corrupt /
+truncated GCC download** — not a Nuitka/GCC-15 incompatibility. The
+v1.6.0 misdiagnosis invalidated the entire v1.6.0 redesign.
 
-Considered three behaviours when explicit MSVC + heavy module collide:
+The correct, final design:
 
-- **(A) Hard error** — safe but annoying; user has to learn the
-  workaround instead of just getting a working build.
-- **(B) Auto-switch with a warning** — *chosen.* The build succeeds;
-  the warning makes clear what happened; `--force-msvc` exists for
-  users who want MSVC anyway.
-- **(C) Just warn, respect the choice** — produces the C1002 failure
-  the guard exists to prevent. Defeats the point.
+- `HEAVY_C_MODULES` is a **set** of package names (`pymupdf`, `fitz`).
+- When detected, `--compiler=auto` **routes the build to MinGW64**.
+  GCC compiles the giant translation unit; the module is compiled and
+  bundled normally; the standalone exe works.
+- **No `--nofollow-import-to` is ever auto-added.** Excluding a module
+  needed at runtime breaks a standalone build, full stop.
+- Heavy-C + MSVC is a guaranteed failure → the script warns loudly.
+- The membership criterion: only packages that ship *compilable C
+  source* (pymupdf). Prebuilt-wheel packages never belong here.
 
-(B) wins because the goal of this script is "every project just builds,
-without per-project debugging." Override path is one CLI flag.
+This is essentially v1.5.0's instinct (route to MinGW64) — which was
+right all along. It was derailed for two versions by one corrupt
+download.
 
-### Why the set is conservative
+### Cost accepted
 
-`HEAVY_MODULES` errs on the side of **including** packages even when
-MSVC sometimes succeeds on them (pandas is the borderline case). A
-false positive costs nothing — MinGW64 produces the same binary. A
-false negative wastes a 5-15 minute build and surfaces a cryptic
-compiler error. Asymmetric cost → asymmetric default.
+A pymupdf build on MinGW64 takes ~2–2.5 hours (GCC compiling 2.2M lines).
+This is inherent. Release builds are infrequent, so it is accepted.
+`lto = "no"` trims some time. There is no faster way to compile pymupdf
+with Nuitka; the only fundamentally faster alternative considered was a
+PyInstaller backend (rejected by the user in favour of staying on
+Nuitka — see decision log below).
 
-### When to append a new entry
+### Lessons that must not be relitigated
 
-Whenever a build fails on MSVC with `C1002`, `C1060`, or `LNK1102`, and
-the failing `.c` file path identifies a Python package:
+1. **Never auto-add `--nofollow-import-to` for a module the program
+   imports.** It is not "skip compilation" — it is "remove from bundle".
+2. **A failed MinGW64 build is not proof MinGW64 is unusable.** Check
+   for a corrupt GCC download first: delete
+   `%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc` and retry.
+3. **Verify a tool's flag semantics before building a feature on them.**
+   The v1.6.0 nofollow design shipped on an assumption; the docs said
+   the opposite.
 
-1. Add the package's import name AND its pip distribution name (if
-   different) to `HEAVY_MODULES`.
-2. Add a one-line comment explaining why.
-3. Commit. Every project gets the fix.
+### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 
-Never remove an entry — see "asymmetric cost" above.
+The compile step originally used `subprocess.run(cmd)` with inherited
+stdio, so Nuitka's output — including the actual compiler error — went
+only to the console; `build.log` jumped straight to "BUILD FAILED" with
+no diagnostics. v1.5.2 switched to `Popen` with `stdout=PIPE,
+stderr=STDOUT`, streaming each line through `say()` (which writes to both
+console and log). This is what finally made the real `corecrt.h` /
+corrupt-download cause visible. Retained. Cost: `\r` progress bars render
+slightly oddly in the log.
 
 ---
 
-## Why `--compiler=auto` is the default (v1.4.0, refined in v1.5.0)
+## Why `--compiler=auto` is the default (v1.4.0, refined through v1.7.0)
 
 The previous default (`mingw64`) optimized for "smallest auto-installable
 compiler", which was correct on Python ≤3.12 — MinGW64 is small,
@@ -314,18 +326,19 @@ CI should pre-install Python via `setup-python` action).
 
 ## What to NOT change without thinking
 
-1. **The `nofollow_imports` mechanism.** Removing it will break any
-   project that uses it for project-specific dynamic-import dead-code
-   elimination. Keep it even though `HEAVY_MODULES` handles the common
-   pymupdf case.
-2. **The `HEAVY_MODULES` set.** Don't shrink it. The cost of a false
-   positive (MinGW64 build instead of MSVC) is much smaller than a
-   false negative (MSVC C1002 crash after a 10-min compile). When in
-   doubt, add an entry; never remove one.
-3. **The auto-switch behaviour on explicit `--compiler=msvc` + heavy
-   modules.** Some users will be surprised the script overrides their
-   choice. The escape hatch (`--force-msvc`) is the right pressure
-   valve; removing the auto-switch defeats the guard's purpose.
+1. **`nofollow_imports` is exclusion, not "skip compilation".** A
+   nofollow'd module is removed from the build; importing it in a
+   standalone exe raises ImportError at runtime. Never auto-add it for a
+   module the program uses. (This is the v1.6.0 mistake — see history.)
+2. **The `HEAVY_C_MODULES` membership criterion.** Only packages that
+   ship compilable C *source* (pymupdf) belong. Do **not** add
+   prebuilt-wheel packages (opencv, torch, tensorflow, scipy, pandas,
+   ...) — Nuitka never recompiles prebuilt extension modules, so they
+   never cause `C1002`. A wrong entry just forces a needlessly slow
+   MinGW64 build.
+3. **Heavy-C → MinGW64 routing.** Heavy-C projects must build on
+   MinGW64; MSVC cannot compile the giant translation unit. Do not route
+   them to MSVC, and do not try to "skip" the module to keep MSVC.
 4. **The PyQt6 auto-uninstall** when PySide6 is the configured plugin.
    Nuitka picks up whichever it imports first; uninstalling PyQt6 from
    the build env is the only reliable fix.
@@ -333,11 +346,22 @@ CI should pre-install Python via `setup-python` action).
    on these being unique-per-project.
 6. **The `--onefile` / `--standalone` mutual exclusion.** They produce
    different outputs and downstream tooling distinguishes them.
+7. **Streaming Nuitka output to `build.log`.** Without it, failures are
+   undiagnosable from the log.
 
 ---
 
 ## Open items / future work
 
+- **PyInstaller backend.** Evaluated as an alternative for pymupdf
+  projects (PyInstaller bundles the prebuilt binary, no C compilation,
+  ~10-min builds vs. ~2 hrs). The user chose to stay on Nuitka. If the
+  2-hour pymupdf build time becomes unacceptable, a `backend =
+  "pyinstaller"` TOML key remains the obvious next step.
+- **Corrupt-GCC self-heal.** A MinGW64 build that fails early with C
+  header errors is usually a corrupt Nuitka GCC download. The script
+  currently tells the user to clear the cache manually; it could detect
+  the signature and clear+retry automatically once.
 - **Code signing.** Nuitka outputs unsigned binaries. A `[codesign]` TOML
   section with platform-specific signing config (cert thumbprint on
   Windows, developer ID on macOS) would close this gap.

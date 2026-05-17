@@ -29,23 +29,31 @@ All build artefacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the
 | ----------------- | --------------------- | --------------------------------------- |
 | Build mode        | `--onefile`           | `--standalone`                          |
 | Compiler (Win)    | `--compiler=auto`     | `--compiler=msvc\|mingw64\|clang`       |
-| Heavy-module guard| ON (auto-pick MinGW64)| `--force-msvc` (NOT recommended)        |
+| Heavy-C projects  | routed to MinGW64     | (none — MSVC cannot build them)         |
 | Python            | Highest stable 3.10–3.14 | `--python /path/to/python`           |
 | Parallel jobs     | CPU count             | `--jobs N`                              |
 
-### Heavy-module guard
+### Heavy-C module handling
 
-Some Python packages (pymupdf, opencv-python, tensorflow, torch, scipy,
-pandas, lxml, shapely, rasterio, cryptography, pyarrow) generate huge C
-files that crash MSVC with `C1002` / `C1060` / `LNK1102`. The script
-scans `requirements.txt`, `pyproject.toml`, and the entry-point's imports
-for these and **auto-selects MinGW64** when any are detected — even if
-the user passed `--compiler=msvc`. Override with `--force-msvc` if you
-truly want to try MSVC anyway.
+A few packages ship huge **C source** that Nuitka recompiles into one
+enormous translation unit. The canonical case is `pymupdf` — its
+`mupdf.c` is ~2.2M lines. MSVC's compiler heap fails on it (`C1002`);
+GCC/MinGW64 compiles it fine (slowly).
 
-See `PROJECT_MEMORY.md` for the full list and the reasoning, and
-`build.py`'s `HEAVY_MODULES` constant to append new entries when you hit
-the next one in the wild.
+The build script scans `requirements.txt`, `pyproject.toml`, and the
+entry-point's imports for these. When found, `--compiler=auto` **routes
+the build to MinGW64**. The module is compiled and bundled normally —
+the result is a fully standalone exe. A pymupdf build takes ~2 hours.
+
+This is *not* "any large package". opencv-python, tensorflow, torch,
+scipy, pandas, etc. ship prebuilt wheels; Nuitka never recompiles them,
+so they never triggered `C1002`. Only source-shipping packages
+(pymupdf) are in the registry.
+
+The script does **not** exclude heavy-C modules via
+`--nofollow-import-to` — that would drop them from the bundle and the
+exe would crash at startup. See `HEAVY_C_MODULES` in `build.py` to
+register a new offender, and `PROJECT_MEMORY.md` for the full history.
 
 ---
 

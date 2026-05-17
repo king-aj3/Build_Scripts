@@ -102,18 +102,17 @@ Open `build_config.toml` and:
 - Add anything Nuitka's static analysis won't see — dynamic imports
   (`importlib`, `__import__`, plugin loaders) — to `include_modules` or
   `include_packages`
-- **You usually don't need to touch `nofollow_imports`.** Modules known
-  to crash MSVC (pymupdf, opencv-python, tensorflow, torch, scipy,
-  pandas, lxml, shapely, rasterio, cryptography, pyarrow) are handled
-  automatically by the build script's HEAVY_MODULES guard — it forces
-  MinGW64 on Windows so they compile cleanly. Only add to
-  `nofollow_imports` for project-specific dynamic-import edge cases.
+- **Leave `nofollow_imports` empty unless you know exactly what you're
+  doing.** A nofollow'd module is *excluded from the build* — importing
+  it in a standalone exe raises ImportError at runtime. `pymupdf` is
+  handled automatically (the build routes to MinGW64, see §7); do **not**
+  list it here.
 
 ```toml
 [nuitka]
 include_packages     = ["reportlab", "openpyxl"]
 include_modules      = ["ui.dynamic_loader"]
-nofollow_imports     = []   # rarely needed
+nofollow_imports     = []   # leave empty unless excluding a runtime-unused module
 ```
 
 ### Step 3 — Bundle data files
@@ -180,7 +179,7 @@ Linux).
 | `include_packages`     | `--include-package=X` (per entry)       | `["reportlab", "openpyxl"]`            |
 | `include_package_data` | `--include-package-data=X` (per entry)  | `["tiktoken", "fitz"]`                 |
 | `include_modules`      | `--include-module=X` (per entry)        | `["ui.dynamic_loader"]`                |
-| `nofollow_imports`     | `--nofollow-import-to=X` (per entry)    | `["pymupdf.mupdf"]`                    |
+| `nofollow_imports`     | `--nofollow-import-to=X` (per entry)    | `["tests"]` (excludes from build)      |
 | `extra_flags`          | raw passthrough                         | `["--noinclude-pytest-mode=nofollow"]` |
 | `data_dirs`            | `--include-data-dir=src=dst`            | `["assets", "resources"]` or `[["src", "dst"]]` |
 | `data_files`           | `--include-data-files=src=dst`          | `[["assets/x.qss", "assets/x.qss"]]`   |
@@ -248,7 +247,6 @@ lto = "auto"
 [tool.nuitka_builder.nuitka]
 plugins   = ["pyside6"]
 data_dirs = ["assets"]
-nofollow_imports = ["pymupdf.mupdf"]
 
 [tool.nuitka_builder.icons]
 windows = "assets/icon.ico"
@@ -264,21 +262,31 @@ auto-detect.
 
 ---
 
-## 7. Heavy-module guard (Windows)
+## 7. Heavy-C module handling (Windows)
 
-Some Python packages generate C files so large they crash MSVC with one
-of:
+A few Python packages ship huge **C source** that Nuitka recompiles into
+one enormous translation unit, exhausting MSVC's compiler heap:
 
 - `C1002` — "compiler is out of heap space in pass 2"
 - `C1060` — "compiler is out of heap space" (LTCG)
-- `LNK1102` — linker out of memory
 
-The build script keeps a `HEAVY_MODULES` registry in `build.py` of
-packages empirically known to trigger this:
+This is **not** "any large package". opencv-python, tensorflow, torch,
+scipy, pandas, lxml, etc. ship *prebuilt* `.pyd` / `.so` wheels — Nuitka
+copies those as-is and never recompiles them, so they never cause
+`C1002`. Only packages that ship compilable C source qualify.
 
-> `pymupdf`, `fitz`, `opencv-python`, `opencv-contrib-python`, `cv2`,
-> `tensorflow`, `tensorflow-cpu`, `tensorflow-gpu`, `torch`, `scipy`,
-> `pandas`, `lxml`, `shapely`, `rasterio`, `cryptography`, `pyarrow`
+`pymupdf` is the canonical (and currently the only common) case: its
+`mupdf.c` is a SWIG-generated file of ~2.2M lines.
+
+The build script keeps a `HEAVY_C_MODULES` registry in `build.py` — a
+set of package names:
+
+```python
+HEAVY_C_MODULES = {
+    "pymupdf",   # ships SWIG-generated mupdf.c, ~2.2M lines
+    "fitz",      # legacy import alias for pymupdf
+}
+```
 
 Before each build the script scans:
 
@@ -286,42 +294,49 @@ Before each build the script scans:
 2. `pyproject.toml` `[project].dependencies` and `optional-dependencies`
 3. Top-level `import` / `from X import …` statements in the entry file
 
-If **any** match is found:
+If a match is found, `--compiler=auto` **routes the build to MinGW64**.
+GCC/MinGW64 compiles the giant translation unit fine where MSVC cannot.
+The module is compiled and bundled normally — the result is a fully
+standalone exe. (`--compiler=msvc` on such a project will fail with
+`C1002`; the script warns you if you try.)
 
-- `--compiler=auto` → silently picks `mingw64` (with an info log).
-- `--compiler=msvc` → **auto-switches** to `mingw64` and warns.
-- `--force-msvc`    → **overrides everything** (including `--compiler=auto`
-  and the guard); forces MSVC. Windows-only. Expect the build to fail
-  with C1002 if the project genuinely needs MinGW64.
+> **Why not exclude the module instead?** An earlier version
+> (v1.6.0) auto-added `--nofollow-import-to=pymupdf.mupdf` to keep MSVC
+> viable. That was wrong: a nofollow'd module is *excluded from the
+> build*, so the standalone exe crashed at startup with ImportError. A
+> standalone build must actually compile every module it needs.
 
-> Precedence: `--force-msvc` > `--compiler=auto` resolution > heavy-module
-> auto-switch. `--force-msvc` does **not** require `--compiler=msvc` to
-> also be passed.
+### Build time
+
+A pymupdf project on MinGW64 takes roughly **2–2.5 hours** — GCC
+compiling the multi-million-line `mupdf` unit is inherently slow. This
+is unavoidable when compiling pymupdf with Nuitka. Setting `lto = "no"`
+in `build_config.toml` shaves some time off.
 
 ### See what was detected
 
 ```bash
-python build.py . --info     # shows "Heavy modules: ..." line
-python build.py . --audit    # has a [heavy modules] section
+python build.py . --info     # shows "Heavy-C modules: ..." line
+python build.py . --audit    # has a [heavy-C modules] section
 ```
 
-### Add a new entry when you hit a fresh MSVC failure
+### Add a new entry when you hit a fresh C1002
 
-1. Open `build.py`, find `HEAVY_MODULES = {…}`.
-2. Append the import name (and the pip distribution name if different).
-3. Rebuild — the guard will route to MinGW64 automatically.
+1. From the failing `module.<name>.c` path, identify the package.
+2. Open `build.py`, find `HEAVY_C_MODULES = {…}`.
+3. Add its import name (and the pip distribution name too if different).
+4. Rebuild — `--compiler=auto` now routes it to MinGW64.
 
-```python
-HEAVY_MODULES = {
-    "pymupdf", "fitz",
-    "opencv-python", "cv2",
-    # ... existing entries ...
-    "your-new-offender",  # add here
-}
+### If a MinGW64 build fails early (corrupt GCC)
+
+If a MinGW64 build dies almost immediately with C header errors (e.g.
+`corecrt.h: expected ';' before 'typedef'`), Nuitka's downloaded GCC is
+corrupt. Delete it and rebuild — Nuitka re-downloads a clean copy:
+
 ```
-
-No project-specific config changes needed. The single common script
-protects every project.
+rmdir /s /q "%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc"
+python build.py . --clean --clean-env --compiler=mingw64
+```
 
 ---
 
