@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.7.0"
+SCRIPT_VERSION    = "1.7.1"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -620,6 +620,80 @@ def detect_heavy_c_modules(project_dir: Path, cfg: "Config") -> list:
     return sorted(hits)
 
 
+def get_total_ram_gb() -> "float | None":
+    """Total physical RAM in GiB, or None if it cannot be determined.
+
+    Stdlib only - no psutil dependency.
+      Windows : GlobalMemoryStatusEx via ctypes
+      Linux   : os.sysconf SC_PHYS_PAGES * SC_PAGE_SIZE
+      macOS   : same sysconf keys where available
+    """
+    try:
+        if IS_WIN:
+            class _MEMSTAT(ctypes.Structure):
+                _fields_ = [("dwLength",                ctypes.c_ulong),
+                            ("dwMemoryLoad",            ctypes.c_ulong),
+                            ("ullTotalPhys",            ctypes.c_ulonglong),
+                            ("ullAvailPhys",            ctypes.c_ulonglong),
+                            ("ullTotalPageFile",        ctypes.c_ulonglong),
+                            ("ullAvailPageFile",        ctypes.c_ulonglong),
+                            ("ullTotalVirtual",         ctypes.c_ulonglong),
+                            ("ullAvailVirtual",         ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = _MEMSTAT()
+            m.dwLength = ctypes.sizeof(_MEMSTAT)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                return m.ullTotalPhys / (1024 ** 3)
+        else:
+            return (os.sysconf("SC_PAGE_SIZE")
+                    * os.sysconf("SC_PHYS_PAGES")) / (1024 ** 3)
+    except Exception:
+        pass
+    return None
+
+
+def _tune_heavy_c_build(jobs_explicit: "int | None", lto_cfg: str) -> tuple:
+    """Auto-tune (jobs, lto) for a heavy-C build from total system RAM.
+
+    Heavy-C builds compile one enormous translation unit (pymupdf's
+    mupdf.c). Two things cause the C compiler to run out of memory:
+      - too many parallel jobs (each cc1 can need several GB), and
+      - LTO, which inflates per-process memory and is very heavy at link.
+
+    Returns (jobs, lto, ram_gb). ram_gb may be None if undetectable.
+
+    Explicit user choices always win: --jobs N is honoured as-is, and an
+    explicit lto = "yes"/"no" in build_config.toml is honoured as-is;
+    only lto = "auto" is decided here.
+    """
+    ram = get_total_ram_gb()
+    cpu = multiprocessing.cpu_count()
+
+    # ── Jobs ──────────────────────────────────────────────────────────
+    if jobs_explicit is not None:
+        jobs = jobs_explicit                       # user override wins
+    elif ram is None:
+        jobs = 1                                   # unknown -> safest
+    else:
+        # Budget ~4 GB per parallel job (the mupdf TU can need that much),
+        # against 70% of total RAM so the OS keeps headroom.
+        jobs = max(1, min(cpu, int((ram * 0.70) // 4.0)))
+
+    # ── LTO ───────────────────────────────────────────────────────────
+    if lto_cfg in ("yes", "no"):
+        lto = lto_cfg                              # explicit config wins
+    elif ram is None:
+        lto = "no"                                 # unknown -> safe
+    else:
+        # LTO's link stage is very memory-hungry on a heavy-C program.
+        # Keep it only when RAM clearly affords it; an OOM at link would
+        # waste the whole multi-hour compile. Runtime gain for a GUI app
+        # is negligible anyway, so 'off' below the threshold costs little.
+        lto = "yes" if ram >= 32.0 else "no"
+
+    return jobs, lto, ram
+
+
 def _resolve_compiler_auto(auto_yes: bool = False, heavy_c: list | None = None) -> str:
     """
     Resolve --compiler=auto to a concrete compiler on Windows.
@@ -1111,12 +1185,7 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
     # module IS compiled and bundled; we do NOT exclude it (that breaks the
     # standalone exe).
     heavy_c = detect_heavy_c_modules(project_dir, cfg)
-
-    # ── Resolve parallel C-compile jobs ───────────────────────────────────
-    # jobs is None -> not set explicitly: default to CPU count.
-    # jobs is int  -> user passed --jobs N explicitly: honour it exactly.
-    if jobs is None:
-        jobs = multiprocessing.cpu_count()
+    jobs_explicit = jobs   # None unless the user passed --jobs N
 
     # ── Resolve the compiler ──────────────────────────────────────────────
     # Precedence: --force-msvc > --compiler=auto resolution > explicit value.
@@ -1140,16 +1209,35 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         warn("MSVC cannot compile these - the build will fail with C1002.")
         warn("Use --compiler=mingw64 (or --compiler=auto) for this project.")
 
+    # ── Resolve parallel jobs + LTO ───────────────────────────────────────
+    # Heavy-C builds compile one enormous translation unit; too many parallel
+    # jobs (or LTO) can run the C compiler out of memory. Auto-tune both from
+    # total system RAM. Normal builds keep CPU-count jobs and config LTO.
+    ram = None
+    if heavy_c:
+        jobs, cfg.lto, ram = _tune_heavy_c_build(jobs_explicit, cfg.lto)
+    elif jobs is None:
+        jobs = multiprocessing.cpu_count()
+
     mode = "One-File" if onefile else "Standalone Folder"
     banner(f"{cfg.name} v{cfg.version} - Nuitka Build ({mode})")
     say(f"  Project   : {project_dir}")
     say(f"  Platform  : {OS_NAME} {OS_ARCH}")
     say(f"  Compiler  : {compiler if IS_WIN else 'system default'}")
     if heavy_c:
+        ram_str = f"{ram:.0f} GB" if ram else "undetected"
         say(f"  Heavy-C   : {', '.join(heavy_c)}")
-        say(f"              compiled normally on {compiler} "
-            f"(slow but produces a working exe)")
+        say(f"              compiled normally on {compiler} (slow, works)")
+        say(f"  RAM       : {ram_str}  ->  auto-tuned --jobs={jobs}, "
+            f"lto={cfg.lto}"
+            + ("  (--jobs override honoured)" if jobs_explicit is not None
+               else ""))
+    say(f"  Jobs      : {jobs}")
     say(f"  Entry     : {cfg.entry}\n")
+
+    if heavy_c and ram is None:
+        warn("Could not detect system RAM - using conservative "
+             f"--jobs={jobs}, lto={cfg.lto}.")
 
     check_compiler(compiler)
 
@@ -1203,10 +1291,11 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
                 say("        Heavy-C module on MSVC -> C1002 is expected.")
                 say("        Rebuild with --compiler=mingw64 (or --compiler=auto).")
             if compiler == "mingw64":
-                say("        MinGW64 build failed early (e.g. corecrt.h errors)?")
-                say("        Nuitka's downloaded GCC may be corrupt. Delete:")
+                say("        'cc1.exe: out of memory'? Too many parallel jobs")
+                say("        for this RAM. Retry with --jobs 1, or free RAM.")
+                say("        Early header errors (corecrt.h)? Nuitka's GCC")
+                say("        download may be corrupt - delete and re-download:")
                 say('          %LOCALAPPDATA%\\Nuitka\\Nuitka\\Cache\\downloads\\gcc')
-                say("        then rebuild - Nuitka re-downloads a fresh copy.")
         return False
 
     step("Collecting output...")
@@ -1763,8 +1852,10 @@ def main():
     parser.add_argument("--ci",         action="store_true", help="Use current Python, no venv")
     # Tuning
     parser.add_argument("--jobs",   type=int, default=None,
-                        help="Parallel C jobs (default: CPU count, capped at 2 "
-                             "when heavy modules are present).")
+                        help="Parallel C jobs. Default: CPU count for normal "
+                             "builds; for heavy-C builds (pymupdf) auto-tuned "
+                             "from system RAM. An explicit value is honoured "
+                             "as-is.")
     parser.add_argument("--python", metavar="PATH",
                         help="Force a specific Python interpreter")
     args = parser.parse_args()

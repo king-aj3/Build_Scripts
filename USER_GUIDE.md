@@ -306,12 +306,24 @@ standalone exe. (`--compiler=msvc` on such a project will fail with
 > build*, so the standalone exe crashed at startup with ImportError. A
 > standalone build must actually compile every module it needs.
 
-### Build time
+### Build time and memory
 
 A pymupdf project on MinGW64 takes roughly **2–2.5 hours** — GCC
-compiling the multi-million-line `mupdf` unit is inherently slow. This
-is unavoidable when compiling pymupdf with Nuitka. Setting `lto = "no"`
-in `build_config.toml` shaves some time off.
+compiling the multi-million-line `mupdf` unit is inherently slow.
+
+That unit also needs a lot of RAM. The script auto-tunes for it: it
+detects total system RAM and picks a safe `--jobs` count (≈4 GB
+budgeted per parallel job) and decides LTO (kept only at ≥ 32 GB, where
+its memory-hungry link stage is affordable). You'll see a line like:
+
+```
+  RAM       : 16 GB  ->  auto-tuned --jobs=2, lto=no
+```
+
+Override either if you know better: `--jobs N` on the command line, or
+`lto = "yes"/"no"` in `build_config.toml`. If a build dies with
+`cc1.exe: out of memory`, the machine is short on RAM — close other
+apps or force `--jobs 1`.
 
 ### See what was detected
 

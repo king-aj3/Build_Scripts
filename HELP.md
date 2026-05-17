@@ -47,7 +47,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag            | Effect                                                  |
 | --------------- | ------------------------------------------------------- |
-| `--jobs N`      | Parallel C compile jobs. Default: CPU count, capped at 2 when heavy modules are present. |
+| `--jobs N`      | Parallel C compile jobs. Default: CPU count for normal builds; RAM-auto-tuned for heavy-C builds (pymupdf). An explicit value is honored as-is. |
 | `--python PATH` | Force a specific interpreter (overrides auto-discovery).|
 
 ## Common recipes
@@ -127,6 +127,18 @@ check `build.log`.
 If both are installed, Nuitka picks the wrong one. The build script
 auto-uninstalls PyQt6 from `build_env/` when PySide6 is the configured
 plugin. Set `plugins = ["pyqt6"]` in TOML to invert this.
+
+### MinGW64 build fails with "cc1.exe: out of memory"
+Symptom: GCC compiles for a long time on `module.pymupdf.mupdf.o`, then
+`cc1.exe: out of memory`. Cause: too many parallel C-compiler processes
+for the machine's RAM — the giant `mupdf` translation unit alone needs
+several GB.
+As of v1.7.1 the script auto-tunes `--jobs` (and LTO) from total system
+RAM for heavy-C builds, so this should not recur. If it still does:
+- Free up RAM (close other apps) and rebuild.
+- Force single-job: `--jobs 1` (slowest, lowest peak memory).
+- If you set `lto = "yes"` explicitly in `build_config.toml`, remove it
+  or set `"auto"` — LTO's link stage is very memory-hungry.
 
 ### MinGW64 build fails early — CRT headers won't compile
 Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at

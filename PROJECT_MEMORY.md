@@ -187,6 +187,35 @@ Nuitka — see decision log below).
    The v1.6.0 nofollow design shipped on an assumption; the docs said
    the opposite.
 
+### v1.7.1 — RAM-aware job + LTO tuning
+
+The first v1.7.0 pymupdf build on MinGW64 reached the C compiler (good —
+the compiler routing was right) but died with `cc1.exe: out of memory`
+on `module.pymupdf.mupdf.o`. `--jobs=4` ran four `cc1.exe` processes,
+one of them the multi-GB `mupdf` translation unit, and LTO inflated each
+further. The aggregate exhausted physical RAM.
+
+v1.7.1 added `get_total_ram_gb()` (stdlib: `GlobalMemoryStatusEx` on
+Windows, `sysconf` elsewhere) and `_tune_heavy_c_build()`:
+
+- **Jobs**: ~4 GB budgeted per parallel job against 70% of total RAM,
+  capped at CPU count. So an 8 GB box gets `--jobs=1` — the giant unit
+  compiles alone, with the whole machine to itself.
+- **LTO**: kept on only at ≥ 32 GB (its link stage is very
+  memory-hungry); off below. For a Qt GUI app LTO's runtime benefit is
+  negligible, so "off on smaller machines" trades nothing real for a
+  build that completes.
+
+This is the v1.5.2 LTO-off + job-cap idea done properly — *measured*
+against actual RAM instead of a blanket cap, and only for heavy-C
+builds. v1.5.2's instinct was right; it was discarded in v1.6.0 along
+with the rest of that (mistaken) redesign and is now restored on a
+correct footing.
+
+Explicit user input always wins: `--jobs N` and an explicit
+`lto = "yes"/"no"` bypass the tuning. The build banner prints the
+detected RAM and the values chosen, so the decision is never hidden.
+
 ### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 
 The compile step originally used `subprocess.run(cmd)` with inherited

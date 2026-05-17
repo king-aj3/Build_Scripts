@@ -1,9 +1,38 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.7.0
+**Script version:** 1.7.1
 **Date:** 2026-05-17
 **License:** Internal use
+
+## What's new in 1.7.1
+
+**RAM-aware auto-tuning for heavy-C builds.** A pymupdf build on
+MinGW64 failed with `cc1.exe: out of memory` — GCC ran out of RAM
+compiling the giant `mupdf` translation unit, because `--jobs=4` ran
+four C-compiler processes at once (one of them the multi-GB `mupdf`
+unit) and LTO inflated per-process memory further.
+
+The build script now detects total system RAM (stdlib only — Windows
+`GlobalMemoryStatusEx`, Linux/macOS `sysconf`) and, for heavy-C builds,
+auto-tunes:
+
+- **Parallel jobs** — budgeted at ~4 GB per job against 70% of total
+  RAM, capped at the CPU count. Examples on a 4-core box: 8 GB → 1 job,
+  16 GB → 2, 32 GB → 4.
+- **LTO** — kept on only when RAM clearly affords its memory-hungry link
+  stage (≥ 32 GB); off below that. For a GUI app the runtime difference
+  is negligible, so this trades nothing meaningful for a build that
+  finishes.
+
+Explicit choices always win: `--jobs N` is honoured as-is, and an
+explicit `lto = "yes"/"no"` in `build_config.toml` overrides the
+auto-decision. Normal (non-heavy-C) builds are unaffected — full CPU
+count, config LTO.
+
+The BUILD FAILED footer now distinguishes a `cc1.exe: out of memory`
+(too many jobs for the RAM) from early header errors (corrupt GCC
+download).
 
 ## What's new in 1.7.0
 
