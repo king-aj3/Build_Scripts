@@ -311,19 +311,23 @@ standalone exe. (`--compiler=msvc` on such a project will fail with
 A pymupdf project on MinGW64 takes roughly **2–2.5 hours** — GCC
 compiling the multi-million-line `mupdf` unit is inherently slow.
 
-That unit also needs a lot of RAM. The script auto-tunes for it: it
-detects total system RAM and picks a safe `--jobs` count (≈4 GB
-budgeted per parallel job) and decides LTO (kept only at ≥ 32 GB, where
-its memory-hungry link stage is affordable). You'll see a line like:
+That unit is also very memory-hungry. Heavy-C builds run **`--jobs=1`**
+so it compiles alone (no concurrent large `cc1.exe` processes competing
+for RAM). On Windows the real ceiling is the **commit limit** = physical
+RAM + pagefile; `cc1` compiling `mupdf.c` can need 10–18 GB. Before a
+heavy-C build the script reports both:
 
 ```
-  RAM       : 16 GB  ->  auto-tuned --jobs=2, lto=no
+  RAM       : 16 GB  ->  --jobs=1, lto=no
+  Commit lim: 22 GB (RAM + pagefile)
 ```
 
-Override either if you know better: `--jobs N` on the command line, or
-`lto = "yes"/"no"` in `build_config.toml`. If a build dies with
-`cc1.exe: out of memory`, the machine is short on RAM — close other
-apps or force `--jobs 1`.
+If the commit limit is low it warns and pauses — **enlarge the Windows
+pagefile** (System Properties → Advanced → Performance Settings →
+Advanced → Virtual memory) to a custom size of ~48 GB and reboot. The
+compile then completes (spilling to disk; slow, but compile time isn't
+the concern). Override the job count with `--jobs N` only if you have
+the RAM headroom for parallel heavy compiles.
 
 ### See what was detected
 

@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.7.1"
+SCRIPT_VERSION    = "1.7.2"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -620,6 +620,30 @@ def detect_heavy_c_modules(project_dir: Path, cfg: "Config") -> list:
     return sorted(hits)
 
 
+def _win_memstatus():
+    """Return a populated MEMORYSTATUSEX (Windows) or None."""
+    if not IS_WIN:
+        return None
+    try:
+        class _MEMSTAT(ctypes.Structure):
+            _fields_ = [("dwLength",                ctypes.c_ulong),
+                        ("dwMemoryLoad",            ctypes.c_ulong),
+                        ("ullTotalPhys",            ctypes.c_ulonglong),
+                        ("ullAvailPhys",            ctypes.c_ulonglong),
+                        ("ullTotalPageFile",        ctypes.c_ulonglong),
+                        ("ullAvailPageFile",        ctypes.c_ulonglong),
+                        ("ullTotalVirtual",         ctypes.c_ulonglong),
+                        ("ullAvailVirtual",         ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        m = _MEMSTAT()
+        m.dwLength = ctypes.sizeof(_MEMSTAT)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+            return m
+    except Exception:
+        pass
+    return None
+
+
 def get_total_ram_gb() -> "float | None":
     """Total physical RAM in GiB, or None if it cannot be determined.
 
@@ -630,19 +654,8 @@ def get_total_ram_gb() -> "float | None":
     """
     try:
         if IS_WIN:
-            class _MEMSTAT(ctypes.Structure):
-                _fields_ = [("dwLength",                ctypes.c_ulong),
-                            ("dwMemoryLoad",            ctypes.c_ulong),
-                            ("ullTotalPhys",            ctypes.c_ulonglong),
-                            ("ullAvailPhys",            ctypes.c_ulonglong),
-                            ("ullTotalPageFile",        ctypes.c_ulonglong),
-                            ("ullAvailPageFile",        ctypes.c_ulonglong),
-                            ("ullTotalVirtual",         ctypes.c_ulonglong),
-                            ("ullAvailVirtual",         ctypes.c_ulonglong),
-                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-            m = _MEMSTAT()
-            m.dwLength = ctypes.sizeof(_MEMSTAT)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+            m = _win_memstatus()
+            if m is not None:
                 return m.ullTotalPhys / (1024 ** 3)
         else:
             return (os.sysconf("SC_PAGE_SIZE")
@@ -652,32 +665,48 @@ def get_total_ram_gb() -> "float | None":
     return None
 
 
+def get_commit_limit_gb() -> "float | None":
+    """Windows commit limit (physical RAM + pagefile) in GiB, else None.
+
+    This is the ceiling on how much memory all processes can reserve.
+    `cc1.exe: out of memory` happens when the C compiler cannot commit
+    within this limit - so for a heavy-C build it matters more than RAM
+    alone. ullTotalPageFile from GlobalMemoryStatusEx *is* the system
+    commit limit (despite the name). Non-Windows: None.
+    """
+    m = _win_memstatus()
+    if m is not None:
+        return m.ullTotalPageFile / (1024 ** 3)
+    return None
+
+
+# A single cc1.exe compiling pymupdf's mupdf.c at -O3 can need well over
+# 10 GB. If the Windows commit limit is below this, the build is likely to
+# fail with 'cc1.exe: out of memory' - warn before the (multi-hour) build.
+HEAVY_C_MIN_COMMIT_GB = 40.0
+
+
 def _tune_heavy_c_build(jobs_explicit: "int | None", lto_cfg: str) -> tuple:
-    """Auto-tune (jobs, lto) for a heavy-C build from total system RAM.
+    """Auto-tune (jobs, lto) for a heavy-C build.
 
-    Heavy-C builds compile one enormous translation unit (pymupdf's
-    mupdf.c). Two things cause the C compiler to run out of memory:
-      - too many parallel jobs (each cc1 can need several GB), and
-      - LTO, which inflates per-process memory and is very heavy at link.
+    Heavy-C builds compile one pathological translation unit (pymupdf's
+    mupdf.c, ~2.2M lines) whose cc1.exe needs many GB. Running it
+    concurrently with other large units multiplies peak memory and causes
+    'cc1.exe: out of memory'.
 
-    Returns (jobs, lto, ram_gb). ram_gb may be None if undetectable.
+    Decision: heavy-C builds default to --jobs=1 - each huge unit then
+    compiles alone with the whole machine's memory available. Compile time
+    is not a concern for these (rare, release-only) builds. A RAM-derived
+    job count was tried (v1.7.1) and was too optimistic; serializing is the
+    only reliable choice.
 
-    Explicit user choices always win: --jobs N is honoured as-is, and an
-    explicit lto = "yes"/"no" in build_config.toml is honoured as-is;
-    only lto = "auto" is decided here.
+    Returns (jobs, lto, ram_gb). Explicit user choices always win:
+    --jobs N is honoured as-is; an explicit lto = "yes"/"no" overrides.
     """
     ram = get_total_ram_gb()
-    cpu = multiprocessing.cpu_count()
 
-    # ── Jobs ──────────────────────────────────────────────────────────
-    if jobs_explicit is not None:
-        jobs = jobs_explicit                       # user override wins
-    elif ram is None:
-        jobs = 1                                   # unknown -> safest
-    else:
-        # Budget ~4 GB per parallel job (the mupdf TU can need that much),
-        # against 70% of total RAM so the OS keeps headroom.
-        jobs = max(1, min(cpu, int((ram * 0.70) // 4.0)))
+    # ── Jobs: serialize heavy-C builds ────────────────────────────────
+    jobs = jobs_explicit if jobs_explicit is not None else 1
 
     # ── LTO ───────────────────────────────────────────────────────────
     if lto_cfg in ("yes", "no"):
@@ -686,9 +715,8 @@ def _tune_heavy_c_build(jobs_explicit: "int | None", lto_cfg: str) -> tuple:
         lto = "no"                                 # unknown -> safe
     else:
         # LTO's link stage is very memory-hungry on a heavy-C program.
-        # Keep it only when RAM clearly affords it; an OOM at link would
-        # waste the whole multi-hour compile. Runtime gain for a GUI app
-        # is negligible anyway, so 'off' below the threshold costs little.
+        # Keep it only when RAM clearly affords it. Runtime gain for a GUI
+        # app is negligible, so 'off' below the threshold costs nothing real.
         lto = "yes" if ram >= 32.0 else "no"
 
     return jobs, lto, ram
@@ -1210,12 +1238,14 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         warn("Use --compiler=mingw64 (or --compiler=auto) for this project.")
 
     # ── Resolve parallel jobs + LTO ───────────────────────────────────────
-    # Heavy-C builds compile one enormous translation unit; too many parallel
-    # jobs (or LTO) can run the C compiler out of memory. Auto-tune both from
-    # total system RAM. Normal builds keep CPU-count jobs and config LTO.
+    # Heavy-C builds compile one pathological translation unit; they default
+    # to --jobs=1 (serialize) so it compiles alone. LTO is RAM-gated.
+    # Normal builds keep CPU-count jobs and config LTO.
     ram = None
+    commit = None
     if heavy_c:
         jobs, cfg.lto, ram = _tune_heavy_c_build(jobs_explicit, cfg.lto)
+        commit = get_commit_limit_gb()
     elif jobs is None:
         jobs = multiprocessing.cpu_count()
 
@@ -1228,16 +1258,37 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         ram_str = f"{ram:.0f} GB" if ram else "undetected"
         say(f"  Heavy-C   : {', '.join(heavy_c)}")
         say(f"              compiled normally on {compiler} (slow, works)")
-        say(f"  RAM       : {ram_str}  ->  auto-tuned --jobs={jobs}, "
-            f"lto={cfg.lto}"
+        say(f"  RAM       : {ram_str}  ->  --jobs={jobs}, lto={cfg.lto}"
             + ("  (--jobs override honoured)" if jobs_explicit is not None
                else ""))
+        if commit is not None:
+            say(f"  Commit lim: {commit:.0f} GB (RAM + pagefile)")
     say(f"  Jobs      : {jobs}")
     say(f"  Entry     : {cfg.entry}\n")
 
     if heavy_c and ram is None:
         warn("Could not detect system RAM - using conservative "
              f"--jobs={jobs}, lto={cfg.lto}.")
+
+    # Pre-flight: a heavy-C build needs a large Windows commit limit.
+    # cc1.exe compiling pymupdf's mupdf.c can need 10-18 GB; if the commit
+    # limit (RAM + pagefile) is too low the build fails with 'out of
+    # memory' - and that failure costs ~2 hours. Warn BEFORE building.
+    if heavy_c and commit is not None and commit < HEAVY_C_MIN_COMMIT_GB:
+        warn(f"Windows commit limit is {commit:.0f} GB - low for a heavy-C "
+             f"build (pymupdf).")
+        warn(f"cc1.exe compiling mupdf.c may need >10 GB; recommend a commit "
+             f"limit of >= {HEAVY_C_MIN_COMMIT_GB:.0f} GB.")
+        warn("Increase the Windows pagefile before building:")
+        warn("  System Properties -> Advanced -> Performance Settings ->")
+        warn("  Advanced -> Virtual memory Change -> Custom size (e.g.")
+        warn("  49152 MB), then reboot. Otherwise this build may OOM after")
+        warn("  ~2 hours. Proceeding anyway in 10 seconds...")
+        try:
+            time.sleep(10)
+        except KeyboardInterrupt:
+            error("Aborted by user.")
+            return False
 
     check_compiler(compiler)
 

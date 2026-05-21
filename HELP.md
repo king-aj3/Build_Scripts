@@ -47,7 +47,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag            | Effect                                                  |
 | --------------- | ------------------------------------------------------- |
-| `--jobs N`      | Parallel C compile jobs. Default: CPU count for normal builds; RAM-auto-tuned for heavy-C builds (pymupdf). An explicit value is honored as-is. |
+| `--jobs N`      | Parallel C compile jobs. Default: CPU count for normal builds; `1` for heavy-C builds (pymupdf) so the giant unit compiles alone. An explicit value is honored as-is. |
 | `--python PATH` | Force a specific interpreter (overrides auto-discovery).|
 
 ## Common recipes
@@ -129,16 +129,27 @@ auto-uninstalls PyQt6 from `build_env/` when PySide6 is the configured
 plugin. Set `plugins = ["pyqt6"]` in TOML to invert this.
 
 ### MinGW64 build fails with "cc1.exe: out of memory"
-Symptom: GCC compiles for a long time on `module.pymupdf.mupdf.o`, then
-`cc1.exe: out of memory`. Cause: too many parallel C-compiler processes
-for the machine's RAM — the giant `mupdf` translation unit alone needs
-several GB.
-As of v1.7.1 the script auto-tunes `--jobs` (and LTO) from total system
-RAM for heavy-C builds, so this should not recur. If it still does:
-- Free up RAM (close other apps) and rebuild.
-- Force single-job: `--jobs 1` (slowest, lowest peak memory).
-- If you set `lto = "yes"` explicitly in `build_config.toml`, remove it
-  or set `"auto"` — LTO's link stage is very memory-hungry.
+`cc1.exe` (GCC's compiler) ran out of committable memory while compiling
+the giant `module.pymupdf.mupdf.c` translation unit. On Windows the
+ceiling is the **commit limit = physical RAM + pagefile**, not RAM alone.
+`cc1` compiling `mupdf.c` at `-O3` can need 10–18 GB.
+
+As of v1.7.2, heavy-C builds run `--jobs=1` (the giant unit compiles
+alone) and the script warns before the build if the commit limit looks
+too low. The remaining fix is on the machine — **enlarge the Windows
+pagefile** so the commit limit clears ~40 GB+:
+
+1. System Properties → Advanced → Performance **Settings**
+2. Advanced tab → Virtual memory → **Change**
+3. Uncheck "Automatically manage paging file size"
+4. Select the drive, choose **Custom size**
+5. Initial and Maximum = e.g. `49152` (48 GB) on a drive with free space
+6. Set → OK → **reboot**
+
+Then rebuild. The compile will spill to disk (slow) but completes.
+If it *still* OOMs after this, the machine genuinely cannot compile
+pymupdf with Nuitka — use more RAM, or switch this project to a
+PyInstaller build (no C compilation; see PROJECT_MEMORY open items).
 
 ### MinGW64 build fails early — CRT headers won't compile
 Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at

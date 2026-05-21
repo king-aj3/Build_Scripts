@@ -187,34 +187,37 @@ Nuitka — see decision log below).
    The v1.6.0 nofollow design shipped on an assumption; the docs said
    the opposite.
 
-### v1.7.1 — RAM-aware job + LTO tuning
+### v1.7.1 / v1.7.2 — job count and the Windows commit limit
 
 The first v1.7.0 pymupdf build on MinGW64 reached the C compiler (good —
-the compiler routing was right) but died with `cc1.exe: out of memory`
-on `module.pymupdf.mupdf.o`. `--jobs=4` ran four `cc1.exe` processes,
-one of them the multi-GB `mupdf` translation unit, and LTO inflated each
-further. The aggregate exhausted physical RAM.
+compiler routing was right) but died with `cc1.exe: out of memory` on
+`module.pymupdf.mupdf.o`.
 
-v1.7.1 added `get_total_ram_gb()` (stdlib: `GlobalMemoryStatusEx` on
-Windows, `sysconf` elsewhere) and `_tune_heavy_c_build()`:
+**v1.7.1** added RAM detection and derived a job count (~4 GB budgeted
+per job, 70% of RAM). On a 16 GB machine that produced `--jobs=2`. It
+failed again: `mupdf.c` and `pymupdf.c` — two large units — compiled
+concurrently and together exhausted memory. The 4 GB/job budget was far
+too low for `mupdf.c`, whose `cc1.exe` needs well into double-digit GB.
 
-- **Jobs**: ~4 GB budgeted per parallel job against 70% of total RAM,
-  capped at CPU count. So an 8 GB box gets `--jobs=1` — the giant unit
-  compiles alone, with the whole machine to itself.
-- **LTO**: kept on only at ≥ 32 GB (its link stage is very
-  memory-hungry); off below. For a Qt GUI app LTO's runtime benefit is
-  negligible, so "off on smaller machines" trades nothing real for a
-  build that completes.
+**v1.7.2** removed the formula. Heavy-C builds now default to `--jobs=1`:
+the pathological unit compiles alone, so peak memory is one `cc1`, not
+several. Compile time is not a concern for these rare release builds, so
+serializing costs nothing that matters. Explicit `--jobs N` still
+overrides.
 
-This is the v1.5.2 LTO-off + job-cap idea done properly — *measured*
-against actual RAM instead of a blanket cap, and only for heavy-C
-builds. v1.5.2's instinct was right; it was discarded in v1.6.0 along
-with the rest of that (mistaken) redesign and is now restored on a
-correct footing.
+The deeper point: `cc1.exe: out of memory` on Windows is a **commit
+limit** failure, not a physical-RAM failure. The commit limit is
+physical RAM + pagefile. A 16 GB machine with a default pagefile has a
+commit limit far below what `mupdf.c` needs. v1.7.2 reads the commit
+limit (`GlobalMemoryStatusEx.ullTotalPageFile`) and warns *before* the
+~2-hour build if it is under `HEAVY_C_MIN_COMMIT_GB` (40 GB), with
+instructions to enlarge the pagefile. The fix for the user is an OS
+setting (bigger pagefile), not a build flag — the script's job is to
+detect and surface that early rather than fail after two hours.
 
-Explicit user input always wins: `--jobs N` and an explicit
-`lto = "yes"/"no"` bypass the tuning. The build banner prints the
-detected RAM and the values chosen, so the decision is never hidden.
+Lesson: do not try to be clever deriving parallelism for a build with a
+single pathological translation unit. Serialize, and make the real
+constraint (commit limit) visible.
 
 ### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 

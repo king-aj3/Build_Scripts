@@ -1,9 +1,32 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.7.1
+**Script version:** 1.7.2
 **Date:** 2026-05-17
 **License:** Internal use
+
+## What's new in 1.7.2
+
+**Heavy-C builds now serialize to `--jobs=1`.** v1.7.1's RAM-derived job
+count was too optimistic — on a 16 GB machine it picked `--jobs=2`, and
+two large `cc1.exe` processes (pymupdf's `mupdf.c` and `pymupdf.c`)
+compiling concurrently still exhausted memory (`cc1.exe: out of memory`).
+
+The job-count formula is removed. Heavy-C builds default to `--jobs=1`:
+the pathological translation unit then compiles alone with the whole
+machine's memory. Compile time is not a concern for these rare,
+release-only builds. An explicit `--jobs N` still overrides; LTO stays
+RAM-gated (on only at ≥ 32 GB).
+
+**Windows commit-limit pre-flight check.** `cc1.exe: out of memory` on
+Windows is a *commit limit* failure — commit limit = physical RAM +
+pagefile. `cc1` compiling `mupdf.c` at `-O3` can need 10–18 GB. The
+script now reads the commit limit (`GlobalMemoryStatusEx`) and, for a
+heavy-C build, **warns before the build starts** if it's below 40 GB,
+with instructions to enlarge the Windows pagefile — so a too-small
+pagefile is caught in seconds instead of after a ~2-hour compile.
+
+The build banner now shows detected RAM and commit limit.
 
 ## What's new in 1.7.1
 
