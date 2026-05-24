@@ -60,6 +60,19 @@ form. Nothing of your IP is exposed.
 break it. The documented fallback is a PyInstaller backend — see
 `PROJECT_MEMORY.md` open items.
 
+### Package-data module handling
+
+Some packages (`python-barcode`, `PIL`, `qrcode`, …) ship non-Python
+data files — fonts, templates — that Nuitka does not auto-bundle. The
+library still runs in the exe but silently produces empty/broken output
+(barcodes without text, images without glyphs). No traceback, no
+exception.
+
+The script keeps a `PACKAGE_DATA_MODULES` registry and auto-injects
+`--include-package-data=<name>` for each one detected in the project,
+so the data files are bundled. Add a new entry when you discover a new
+silent-empty-output package. See `USER_GUIDE.md` §8 for details.
+
 ---
 
 ## Quick start

@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.0"
+SCRIPT_VERSION    = "1.8.1"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -116,6 +116,47 @@ _ICON_MAC  = ["assets/icon.icns", "resources/icon.icns", "icon.icns"]
 HEAVY_C_MODULES: dict = {
     "pymupdf": "pymupdf.mupdf",   # SWIG wrapper - 2.2M lines of C if compiled
     "fitz":    "pymupdf.mupdf",   # legacy import alias for pymupdf
+}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PACKAGE-DATA REGISTRY
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Packages whose Python code Nuitka compiles fine, but which ship NON-Python
+# data files (fonts, templates, .ttf, .svg) inside the package directory.
+# Nuitka does NOT bundle those automatically. Symptom: the exe runs without
+# raising any exception but silently produces wrong output (empty barcode
+# bars, missing labels, no text glyphs, etc.). No traceback in console mode
+# because no exception is raised - the package just returns empty results.
+#
+# Classic example (and the case this registry was added for):
+#   python-barcode ships .ttf font files inside `barcode/fonts/`. Without
+#   them, the library still runs but renders barcodes without the human-
+#   readable text underneath - and in some renderers, fails silently and
+#   produces nothing at all for non-default label sizes.
+#
+# Listing a package here injects `--include-package-data=<output_name>` so
+# Nuitka bundles every non-Python file inside that package. Detection is
+# the same mechanism as HEAVY_C_MODULES (requirements.txt + pyproject.toml +
+# entry-file top-level imports).
+#
+# Format: { detect_name : nuitka_output_name }
+# The detect_name is matched case-insensitively (with -/_ normalisation);
+# the output_name is passed verbatim to Nuitka and IS case-sensitive (PIL is
+# literally named "PIL" on disk).
+#
+# IMPORTANT - this is NOT for arbitrary large-data packages. matplotlib,
+# scipy, etc. have dedicated Nuitka plugins that already handle their data
+# correctly - blindly using --include-package-data on them inflates the
+# bundle by tens to hundreds of MB. Only list known small-data, non-plugin-
+# covered packages here.
+PACKAGE_DATA_MODULES: dict = {
+    "barcode":      "barcode",   # python-barcode ships .ttf fonts (the real fix)
+    "python_barcode": "barcode", # pip distribution name -> import name
+    "pil":          "PIL",       # safety - PIL is case-sensitive on disk
+    "pillow":       "PIL",       # pip distribution name -> import name
+    "qrcode":       "qrcode",    # safety; small data, costs nothing
 }
 
 
@@ -557,17 +598,40 @@ def _install_msvc() -> bool:
 def detect_heavy_c_modules(project_dir: Path, cfg: "Config") -> dict:
     """Scan the project for HEAVY_C_MODULES (packages shipping huge C source).
 
-    Sources scanned (cheap, ~10ms total):
-      1.  requirements.txt
-      2.  pyproject.toml [project].dependencies and optional-dependencies
-      3.  Top-level `import` / `from X import ...` statements in the entry file
-
     Returns a dict {matched_name: bytecode_target}. Empty = nothing found.
+    Scanning uses _scan_project_for_packages() - see that helper for the
+    sources scanned.
+    """
+    canon = {k.lower().replace("-", "_"): v for k, v in HEAVY_C_MODULES.items()}
+    return _scan_project_for_packages(project_dir, cfg, canon)
+
+
+def detect_package_data_modules(project_dir: Path, cfg: "Config") -> dict:
+    """Scan the project for PACKAGE_DATA_MODULES (packages shipping data files
+    like .ttf fonts that Nuitka does not auto-bundle).
+
+    Returns a dict {matched_name: nuitka_output_name}. Empty = nothing found.
+    Multiple matched names may point to the same output name (e.g. both
+    'pillow' and 'pil' -> 'PIL'); the caller should dedupe on the value.
+    """
+    canon = {k.lower().replace("-", "_"): v for k, v in PACKAGE_DATA_MODULES.items()}
+    return _scan_project_for_packages(project_dir, cfg, canon)
+
+
+def _scan_project_for_packages(project_dir: Path, cfg: "Config",
+                               canon: dict) -> dict:
+    """Generic project-dependency scanner.
+
+    Looks for any of `canon`'s keys (normalised lowercase, '-'->'_') in:
+      1. requirements.txt
+      2. pyproject.toml [project].dependencies and optional-dependencies
+      3. Top-level `import` / `from X import ...` of the entry file
+
+    Returns {matched_key: canon[matched_key]} for everything found.
+    Cheap (~10ms); no AST, no execution.
     """
     import re
     hits: dict = {}
-    # Normalised lookup: "pymupdf"/"fitz" -> the bytecode-mode target submodule
-    canon = {k.lower().replace("-", "_"): v for k, v in HEAVY_C_MODULES.items()}
 
     def _check(token: str):
         t = token.strip().lower()
@@ -1100,6 +1164,11 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
     # HEAVY_C_MODULES block near the top of this file for the full story.
     heavy_c = detect_heavy_c_modules(project_dir, cfg)
 
+    # ── Package-data module detection ─────────────────────────────────────
+    # Packages that ship data files (fonts, templates) that Nuitka does not
+    # auto-bundle - see PACKAGE_DATA_MODULES block for the full story.
+    pkg_data = detect_package_data_modules(project_dir, cfg)
+
     # ── Resolve the compiler ──────────────────────────────────────────────
     # Precedence: --force-msvc > --compiler=auto resolution > explicit value.
     if force_msvc and IS_WIN:
@@ -1129,6 +1198,15 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
                 nofollow_conflicts.append(t)
         cfg.extra_flags = list(cfg.extra_flags) + bytecode_flags
 
+    # ── Package-data: bundle non-Python files inside known data-shipping pkgs
+    # Inject --include-package-data=<name> for each. Dedupe on the output name
+    # since multiple aliases (e.g. pillow + pil) may map to the same package.
+    package_data_flags: list = []
+    if pkg_data:
+        targets = sorted(set(pkg_data.values()))
+        package_data_flags = [f"--include-package-data={t}" for t in targets]
+        cfg.extra_flags = list(cfg.extra_flags) + package_data_flags
+
     if jobs is None:
         jobs = multiprocessing.cpu_count()
 
@@ -1141,6 +1219,9 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         say(f"  Heavy-C   : {', '.join(sorted(heavy_c))}")
         say(f"              shipped as bytecode (no C compile of wrapper)")
         say(f"              " + "  ".join(bytecode_flags))
+    if pkg_data:
+        say(f"  Pkg-data  : {', '.join(sorted(set(pkg_data.values())))}")
+        say(f"              " + "  ".join(package_data_flags))
     say(f"  Jobs      : {jobs}")
     say(f"  Entry     : {cfg.entry}\n")
 
@@ -1634,6 +1715,19 @@ def audit(project_dir: Path, cfg: Config) -> bool:
     else:
         info("None detected.")
 
+    # 7. Package-data modules (informational; auto-handled)
+    say("\n  [package-data modules]")
+    pkg_data = detect_package_data_modules(project_dir, cfg)
+    if pkg_data:
+        targets = sorted(set(pkg_data.values()))
+        info(f"Detected: {', '.join(targets)}")
+        say(f"        These packages ship non-Python data files (fonts, etc.)")
+        say(f"        that Nuitka does not auto-bundle. Will auto-add:")
+        for t in targets:
+            say(f"          --include-package-data={t}")
+    else:
+        info("None detected.")
+
     say("")
     if issues == 0:
         info("Audit complete - no issues.")
@@ -1671,6 +1765,13 @@ def show_info(project_dir: Path, cfg: Config):
         say(f"                     -> bytecode mode: {', '.join(targets)}")
     else:
         say(f"  Heavy-C modules  : (none detected)")
+    pkg_data = detect_package_data_modules(project_dir, cfg)
+    if pkg_data:
+        targets = sorted(set(pkg_data.values()))
+        say(f"  Pkg-data modules : {', '.join(targets)}")
+        say(f"                     -> --include-package-data: {', '.join(targets)}")
+    else:
+        say(f"  Pkg-data modules : (none detected)")
     say("")
     cur = sys.version_info
     ok = MIN_PYTHON <= (cur.major, cur.minor) <= MAX_PYTHON

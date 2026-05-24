@@ -1,9 +1,50 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.0
+**Script version:** 1.8.1
 **Date:** 2026-05-24
 **License:** Internal use
+
+## What's new in 1.8.1
+
+**Auto-bundle data files for known data-shipping packages.** A
+Thrift_Reseller bug surfaced the issue: the standalone exe generated
+barcodes only for the Avery label type and silently produced nothing
+for other types. Root cause: `python-barcode` ships `.ttf` font files
+inside the `barcode/` package directory. Nuitka compiles the Python
+code fine but does **not** auto-bundle non-Python data files. The
+library then ran in the exe without raising any exception — no
+traceback in console mode — but produced empty/broken output for code
+paths that relied on those fonts.
+
+v1.8.1 adds a `PACKAGE_DATA_MODULES` registry parallel to
+`HEAVY_C_MODULES`. When a listed package is detected in the project,
+`--include-package-data=<name>` is appended automatically, telling
+Nuitka to bundle every non-Python file inside that package directory.
+
+Initial registry:
+
+```python
+PACKAGE_DATA_MODULES = {
+    "barcode":        "barcode",   # python-barcode .ttf fonts (the fix)
+    "python_barcode": "barcode",   # pip dist name -> import name
+    "pil":            "PIL",       # safety; case-sensitive on disk
+    "pillow":         "PIL",       # pip dist name -> import name
+    "qrcode":         "qrcode",    # safety
+}
+```
+
+Detection mechanism is shared with heavy-C detection (refactored into a
+new `_scan_project_for_packages()` helper) so adding a third category
+later is cheap. The build banner now shows a `Pkg-data` line listing
+what was auto-added; `--info` and `--audit` show the same information.
+
+**This is NOT a generic "always bundle everything" toggle.** Only
+known small-data, non-Nuitka-plugin-covered packages belong in the
+registry. matplotlib, scipy, etc. have dedicated Nuitka plugins that
+already handle their data correctly — blindly using
+`--include-package-data` on them inflates the bundle by tens to
+hundreds of MB.
 
 ## What's new in 1.8.0
 

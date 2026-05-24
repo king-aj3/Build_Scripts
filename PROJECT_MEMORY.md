@@ -269,6 +269,56 @@ The PyInstaller backend remains a documented fallback (in open items)
 if a future package proves resistant to bytecode mode, but is no longer
 the imminent next step it was during the v1.7.x failures.
 
+### v1.8.1 — package-data registry for silent-empty-output gotcha
+
+After v1.8.0 locked in the bytecode-mode build, Thrift_Reseller surfaced
+a different class of bundling bug: the exe ran without raising any
+exception (`cmd.exe` with console mode enabled showed no traceback), but
+non-Avery label types silently produced no barcode. PyCharm rendered all
+label types correctly. Avery worked in the exe; non-Avery didn't.
+
+Initial hypothesis (PIL plugins not bundled) was wrong — pointed out
+correctly: QR codes use PIL too and work everywhere, so PIL was bundled
+fine. Also: the project uses `python-barcode` directly, not
+`reportlab.graphics.barcode`.
+
+Real cause: **`python-barcode` ships `.ttf` font files inside its package
+directory** (`barcode/fonts/`). Nuitka compiles the Python code fine but
+does **not** auto-bundle non-Python files inside a package. The library
+ran in the exe, didn't error, just returned empty/incomplete renderings
+for code paths that needed the fonts.
+
+Fix: `--include-package-data=barcode` forces Nuitka to bundle every
+non-Python file inside the `barcode/` package. The user requested this
+go into the common script rather than the project's `build_config.toml`,
+parallel to how heavy-C is handled — so every project gets the fix
+automatically.
+
+v1.8.1 adds:
+
+- `PACKAGE_DATA_MODULES` dict (alongside `HEAVY_C_MODULES`) mapping
+  detect-name → Nuitka output name. Initial entries: `barcode`,
+  `python_barcode` → `barcode`; `pil`, `pillow` → `PIL`; `qrcode` →
+  `qrcode`.
+- `detect_package_data_modules()` mirroring the heavy-C detector.
+- A new shared helper `_scan_project_for_packages()` that both detectors
+  use, so adding a third category later is cheap.
+- Auto-injection of `--include-package-data=<name>` into the Nuitka
+  command, with dedup on the output name (e.g. `pillow` + `pil` both
+  collapse to a single `--include-package-data=PIL`).
+- Banner, `--info`, and `--audit` show what was detected and what's
+  being injected.
+
+**Membership criterion (important):** only small-data, non-Nuitka-plugin-
+covered packages belong here. matplotlib, scipy, numpy etc. have
+dedicated Nuitka plugins that already handle their data correctly —
+blindly `--include-package-data` on them inflates the bundle by tens to
+hundreds of MB.
+
+**Diagnostic of this class of bug:** if the exe runs, console mode shows
+no traceback, but a feature produces empty/broken output that works in
+PyCharm — suspect unbundled package data files.
+
 ### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 
 The compile step originally used `subprocess.run(cmd)` with inherited

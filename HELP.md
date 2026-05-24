@@ -140,6 +140,29 @@ If a built exe ever crashes at startup with `ImportError` or
 has failed for that package — fallback is the PyInstaller backend
 (see `PROJECT_MEMORY.md` open items).
 
+### Exe produces empty output silently (no traceback)
+Symptom: the exe runs, no exception is raised, console mode shows no
+output, but a feature produces empty or broken results — empty images,
+missing text on barcodes, blank graphics, etc.
+
+Cause: a package ships non-Python data files (fonts, templates, tables)
+that Nuitka did not auto-bundle. The library then runs without error
+but returns empty results.
+
+As of v1.8.1 known offenders (`barcode` / `python-barcode`, `PIL`,
+`qrcode`) are detected and auto-handled via `--include-package-data`.
+If a new package shows this behaviour:
+
+1. Open `build.py`, find `PACKAGE_DATA_MODULES = {…}`.
+2. Add the package: `"<import_or_dist_name>": "<actual_package_name>"`.
+   The actual_package_name is case-sensitive (e.g. `"PIL"` not `"pil"`).
+3. Rebuild — the `--include-package-data=<name>` flag is injected
+   automatically.
+
+Do **not** add large-data packages (matplotlib, scipy, …) — those have
+dedicated Nuitka plugins. Blindly using `--include-package-data` on them
+inflates the bundle massively.
+
 ### MinGW64 build fails early — CRT headers won't compile
 Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at
 the start of C compilation. Cause: **Nuitka's downloaded GCC is corrupt

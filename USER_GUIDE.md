@@ -341,7 +341,67 @@ python build.py . --clean --clean-env --compiler=mingw64
 
 ---
 
-## 8. CI / GitHub Actions
+## 8. Package-data module handling
+
+Some packages compile fine but ship **non-Python data files** (fonts,
+templates, .ttf, .svg) inside the package directory. Nuitka does **not**
+auto-bundle those. The library still runs in the exe, raises no
+exception, prints nothing — but silently produces empty or broken output
+(barcodes without bars, images without text, etc.).
+
+The script keeps a registry in `build.py` mapping detect-name → Nuitka
+output name:
+
+```python
+PACKAGE_DATA_MODULES = {
+    "barcode":        "barcode",   # python-barcode ships .ttf fonts
+    "python_barcode": "barcode",   # pip dist name -> import name
+    "pil":            "PIL",       # case-sensitive on disk
+    "pillow":         "PIL",       # pip dist name -> import name
+    "qrcode":         "qrcode",
+}
+```
+
+Detection scans the same sources as heavy-C (`requirements.txt`,
+`pyproject.toml`, the entry file's top-level imports). When a match is
+found the script appends `--include-package-data=<output_name>` to the
+Nuitka command. The build banner shows what was auto-added:
+
+```
+  Pkg-data  : PIL, barcode, qrcode
+              --include-package-data=PIL  --include-package-data=barcode  --include-package-data=qrcode
+```
+
+### When to add a new entry
+
+You'll know it when you see it: a feature in the exe silently produces
+empty output, no exception, nothing in `cmd.exe` even with console
+enabled. That's the smoking gun for unbundled data files.
+
+1. Identify the package (often a font/template-using one).
+2. Open `build.py`, find `PACKAGE_DATA_MODULES = {…}`.
+3. Add `"<import_or_dist_name>": "<actual_package_name>"`. The
+   right-hand-side is case-sensitive (e.g. `"PIL"` not `"pil"`).
+4. Rebuild — flag injected automatically.
+
+### What NOT to add
+
+This is **not** a "include everything" knob. Big-data packages
+(matplotlib, scipy, numpy, etc.) have dedicated Nuitka plugins that
+already handle their data correctly. Blindly using
+`--include-package-data` on them inflates the bundle by tens to hundreds
+of MB. Only list known small-data, non-plugin-covered packages.
+
+### See what was detected
+
+```bash
+python build.py . --info     # has a "Pkg-data modules" line
+python build.py . --audit    # has a [package-data modules] section
+```
+
+---
+
+## 9. CI / GitHub Actions
 
 ```yaml
 - uses: actions/checkout@v4
