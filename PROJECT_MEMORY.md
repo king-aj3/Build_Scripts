@@ -219,6 +219,51 @@ Lesson: do not try to be clever deriving parallelism for a build with a
 single pathological translation unit. Serialize, and make the real
 constraint (commit limit) visible.
 
+### v1.7.3 — abandon compilation, ship as bytecode
+
+v1.7.2's `--jobs=1` + commit-limit guardrails were proven insufficient.
+Builds on the user's 16 GB machine OOM'd; user moved to a 32 GB machine
+with a 32 GB pagefile (commit limit 64 GB, jobs=1, lto=no — ample
+headroom by every model). The build *still* OOM'd, this time after only
+6 minutes, with the exact same `allocating 10937968 bytes` failure that
+had appeared on every previous attempt.
+
+The byte count being identical across all machines and configurations is
+diagnostic: `cc1.exe` is hitting a per-process address-space ceiling on
+Windows, not a system-tuning limit. No amount of RAM or pagefile will
+let Nuitka's bundled GCC 15.2 `cc1.exe` compile `pymupdf.mupdf.c` on
+this user's setup.
+
+The fight against the C compiler is over. v1.7.3 stops generating the C
+in the first place. The script appends
+`--noinclude-custom-mode=<target>:bytecode` to the Nuitka command for
+heavy-C modules. Nuitka then ships `pymupdf.mupdf` as plain `.pyc`
+bytecode; CPython interprets it at runtime; the prebuilt `.pyd` is
+bundled by Nuitka's dll-files plugin as usual. No giant C is generated,
+MSVC compiles the rest of the build at full speed, and a heavy-C build
+finishes in ~15–30 minutes instead of failing after 2 hours.
+
+Consequences:
+
+- `HEAVY_C_MODULES` is a dict again `{detect_name: bytecode_target}`.
+- `_resolve_compiler_auto` has no special heavy-C tier — MSVC is fine.
+- The `_tune_heavy_c_build` machinery (RAM-aware jobs, commit-limit
+  pre-flight, 10-second pause) is no longer invoked for heavy-C builds.
+  The functions remain in the file as dead code for now; if v1.7.3
+  succeeds and locks in as v1.8.0, they get removed.
+
+**Status: experimental.** Per Nuitka maintainer's public comments, the
+`bytecode` mode is "largely untested and unsupported" for submodules
+inside packages — which is exactly pymupdf's case. Failure modes:
+
+- Build itself errors out (Nuitka refuses the flag, or generates broken
+  C that fails earlier in the pipeline).
+- Build succeeds but the exe crashes at startup with `ImportError` or
+  `RuntimeError: Compiled function bytecode used`.
+
+If either happens, this experiment has failed and the committed next
+step is the PyInstaller backend — see open items.
+
 ### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 
 The compile step originally used `subprocess.run(cmd)` with inherited

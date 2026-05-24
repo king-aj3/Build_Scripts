@@ -128,28 +128,18 @@ If both are installed, Nuitka picks the wrong one. The build script
 auto-uninstalls PyQt6 from `build_env/` when PySide6 is the configured
 plugin. Set `plugins = ["pyqt6"]` in TOML to invert this.
 
-### MinGW64 build fails with "cc1.exe: out of memory"
-`cc1.exe` (GCC's compiler) ran out of committable memory while compiling
-the giant `module.pymupdf.mupdf.c` translation unit. On Windows the
-ceiling is the **commit limit = physical RAM + pagefile**, not RAM alone.
-`cc1` compiling `mupdf.c` at `-O3` can need 10–18 GB.
+### Heavy-C / pymupdf builds (v1.7.3 experiment)
+The script appends `--noinclude-custom-mode=pymupdf.mupdf:bytecode` for
+projects using pymupdf. Nuitka ships `mupdf.py` as plain bytecode instead
+of compiling it to ~2.2M lines of C (which OOMs every C compiler on every
+machine tested). The build is normal-speed and uses your default compiler
+(MSVC).
 
-As of v1.7.2, heavy-C builds run `--jobs=1` (the giant unit compiles
-alone) and the script warns before the build if the commit limit looks
-too low. The remaining fix is on the machine — **enlarge the Windows
-pagefile** so the commit limit clears ~40 GB+:
-
-1. System Properties → Advanced → Performance **Settings**
-2. Advanced tab → Virtual memory → **Change**
-3. Uncheck "Automatically manage paging file size"
-4. Select the drive, choose **Custom size**
-5. Initial and Maximum = e.g. `49152` (48 GB) on a drive with free space
-6. Set → OK → **reboot**
-
-Then rebuild. The compile will spill to disk (slow) but completes.
-If it *still* OOMs after this, the machine genuinely cannot compile
-pymupdf with Nuitka — use more RAM, or switch this project to a
-PyInstaller build (no C compilation; see PROJECT_MEMORY open items).
+If the built exe crashes at startup with `ImportError` or
+`RuntimeError: Compiled function bytecode used`, the bytecode-mode
+experiment failed for this case — Nuitka's maintainer flagged this mode
+as "largely untested" for submodules-in-packages. Next move: PyInstaller
+backend (recorded in PROJECT_MEMORY open items).
 
 ### MinGW64 build fails early — CRT headers won't compile
 Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at

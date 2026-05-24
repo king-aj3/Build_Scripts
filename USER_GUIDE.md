@@ -105,7 +105,7 @@ Open `build_config.toml` and:
 - **Leave `nofollow_imports` empty unless you know exactly what you're
   doing.** A nofollow'd module is *excluded from the build* — importing
   it in a standalone exe raises ImportError at runtime. `pymupdf` is
-  handled automatically (the build routes to MinGW64, see §7); do **not**
+  handled automatically (shipped as bytecode, see §7); do **not**
   list it here.
 
 ```toml
@@ -262,92 +262,78 @@ auto-detect.
 
 ---
 
-## 7. Heavy-C module handling (Windows)
+## 7. Heavy-C module handling (v1.7.3 experiment)
 
-A few Python packages ship huge **C source** that Nuitka recompiles into
-one enormous translation unit, exhausting MSVC's compiler heap:
-
-- `C1002` — "compiler is out of heap space in pass 2"
-- `C1060` — "compiler is out of heap space" (LTCG)
+A few Python packages — `pymupdf` is the canonical case — ship a giant
+SWIG-generated Python wrapper (`mupdf.py`) that Nuitka would translate
+into ~2.2M lines of C. Every C compiler tested (MSVC, MinGW64) runs out
+of memory on it (`C1002` on MSVC, `cc1.exe: out of memory` on GCC),
+regardless of RAM or pagefile — the failure is a per-process
+address-space ceiling, not a system-tuning problem.
 
 This is **not** "any large package". opencv-python, tensorflow, torch,
 scipy, pandas, lxml, etc. ship *prebuilt* `.pyd` / `.so` wheels — Nuitka
-copies those as-is and never recompiles them, so they never cause
-`C1002`. Only packages that ship compilable C source qualify.
+copies those as-is and never recompiles them, so they never trigger this
+failure.
 
-`pymupdf` is the canonical (and currently the only common) case: its
-`mupdf.c` is a SWIG-generated file of ~2.2M lines.
+**v1.7.3 approach:** stop compiling the wrapper to C. The script appends
+`--noinclude-custom-mode=<target>:bytecode` to the Nuitka command. Nuitka
+then ships that submodule as plain Python bytecode (`.pyc`); CPython
+interprets it at runtime; the prebuilt native `.pyd` that pymupdf
+actually calls into is bundled by Nuitka's dll-files plugin as before.
+No giant C is generated, MSVC handles the rest of the build normally,
+and total build time is ~15–30 min instead of ~2 hours.
 
-The build script keeps a `HEAVY_C_MODULES` registry in `build.py` — a
-set of package names:
+The registry in `build.py` maps detect-name → bytecode-target:
 
 ```python
 HEAVY_C_MODULES = {
-    "pymupdf",   # ships SWIG-generated mupdf.c, ~2.2M lines
-    "fitz",      # legacy import alias for pymupdf
+    "pymupdf": "pymupdf.mupdf",   # SWIG wrapper -> ship as bytecode
+    "fitz":    "pymupdf.mupdf",   # legacy import alias
 }
 ```
 
-Before each build the script scans:
+Detection scans `requirements.txt`, `pyproject.toml`'s `dependencies` /
+`optional-dependencies`, and the entry file's top-level imports.
 
-1. `requirements.txt`
-2. `pyproject.toml` `[project].dependencies` and `optional-dependencies`
-3. Top-level `import` / `from X import …` statements in the entry file
+### What this means for source protection
 
-If a match is found, `--compiler=auto` **routes the build to MinGW64**.
-GCC/MinGW64 compiles the giant translation unit fine where MSVC cannot.
-The module is compiled and bundled normally — the result is a fully
-standalone exe. (`--compiler=msvc` on such a project will fail with
-`C1002`; the script warns you if you try.)
+Your application code is still Nuitka-compiled to native machine code —
+fully protected against casual reverse engineering. The only thing
+shipped as bytecode is `pymupdf.mupdf`, which is the SWIG wrapper —
+already open-source on PyPI, so nothing of *your* IP is exposed.
 
-> **Why not exclude the module instead?** An earlier version
-> (v1.6.0) auto-added `--nofollow-import-to=pymupdf.mupdf` to keep MSVC
-> viable. That was wrong: a nofollow'd module is *excluded from the
-> build*, so the standalone exe crashed at startup with ImportError. A
-> standalone build must actually compile every module it needs.
+### Caveat
 
-### Build time and memory
-
-A pymupdf project on MinGW64 takes roughly **2–2.5 hours** — GCC
-compiling the multi-million-line `mupdf` unit is inherently slow.
-
-That unit is also very memory-hungry. Heavy-C builds run **`--jobs=1`**
-so it compiles alone (no concurrent large `cc1.exe` processes competing
-for RAM). On Windows the real ceiling is the **commit limit** = physical
-RAM + pagefile; `cc1` compiling `mupdf.c` can need 10–18 GB. Before a
-heavy-C build the script reports both:
-
-```
-  RAM       : 16 GB  ->  --jobs=1, lto=no
-  Commit lim: 22 GB (RAM + pagefile)
-```
-
-If the commit limit is low it warns and pauses — **enlarge the Windows
-pagefile** (System Properties → Advanced → Performance Settings →
-Advanced → Virtual memory) to a custom size of ~48 GB and reboot. The
-compile then completes (spilling to disk; slow, but compile time isn't
-the concern). Override the job count with `--jobs N` only if you have
-the RAM headroom for parallel heavy compiles.
+Nuitka's maintainer has stated the `bytecode` mode is "largely untested
+and unsupported" for submodules inside packages, which is exactly
+pymupdf's case. The build may succeed and the exe may run cleanly; or
+the exe may crash at startup with `ImportError` /
+`RuntimeError: Compiled function bytecode used`. The cost of finding out
+is one ~30-min build. If the experiment fails, the next move is a
+PyInstaller backend (no C compilation; recorded in PROJECT_MEMORY open
+items).
 
 ### See what was detected
 
 ```bash
-python build.py . --info     # shows "Heavy-C modules: ..." line
+python build.py . --info     # shows the bytecode targets
 python build.py . --audit    # has a [heavy-C modules] section
 ```
 
-### Add a new entry when you hit a fresh C1002
+### Add a new entry
 
-1. From the failing `module.<name>.c` path, identify the package.
+1. From a failing `module.<name>.c` path, identify the package.
 2. Open `build.py`, find `HEAVY_C_MODULES = {…}`.
-3. Add its import name (and the pip distribution name too if different).
-4. Rebuild — `--compiler=auto` now routes it to MinGW64.
+3. Add `"<import_name>": "<submodule.to.bytecode>"` (and the pip
+   distribution name too if it differs from the import name).
+4. Rebuild — the bytecode flag is injected automatically.
 
 ### If a MinGW64 build fails early (corrupt GCC)
 
-If a MinGW64 build dies almost immediately with C header errors (e.g.
-`corecrt.h: expected ';' before 'typedef'`), Nuitka's downloaded GCC is
-corrupt. Delete it and rebuild — Nuitka re-downloads a clean copy:
+Unrelated to heavy-C, but worth noting: if a MinGW64 build dies almost
+immediately with C header errors (e.g. `corecrt.h: expected ';' before
+'typedef'`), Nuitka's downloaded GCC is corrupt. Delete and rebuild:
 
 ```
 rmdir /s /q "%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc"

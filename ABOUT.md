@@ -1,9 +1,44 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.7.2
-**Date:** 2026-05-17
+**Script version:** 1.7.3
+**Date:** 2026-05-24
 **License:** Internal use
+
+## What's new in 1.7.3 (experiment)
+
+**Heavy-C modules now shipped as Python bytecode, not recompiled to C.**
+Multiple v1.7.x builds proved that `cc1.exe` from Nuitka's bundled GCC
+15.2 cannot compile `pymupdf.mupdf.c` regardless of physical RAM, pagefile,
+or job count — the same `out of memory allocating 10937968 bytes` failure
+happened on 16 GB and 32 GB machines, with `--jobs=1` and ample commit
+limit. The failure is a per-process address-space ceiling, not a
+system-tuning issue.
+
+v1.7.3 stops fighting the compiler. When a heavy-C module is detected the
+script appends `--noinclude-custom-mode=<target>:bytecode` to the Nuitka
+command (e.g. `pymupdf.mupdf:bytecode`). Nuitka then ships that submodule
+as plain `.pyc` bytecode; CPython interprets it at runtime; the prebuilt
+native `.pyd` that pymupdf actually calls into is bundled by Nuitka's
+dll-files plugin as usual. The giant `mupdf.c` is never generated.
+
+Consequences:
+
+- MSVC works again for heavy-C projects — no compiler routing.
+- No `--jobs=1` cap, no LTO-off, no commit-limit pre-flight: the build
+  is back to a normal-speed Nuitka build (~15-30 min instead of 2+ hrs).
+- `HEAVY_C_MODULES` is a dict again `{detect_name: bytecode_target}`.
+- Source-protection profile: user's app code is Nuitka-compiled (machine
+  code, fully protected); only pymupdf's already-public SWIG wrapper
+  is in bytecode form. Nothing of the user's IP is exposed.
+
+**Caveat — this is an experiment.** Nuitka's maintainer has stated the
+`bytecode` mode is "largely untested and unsupported" for submodules
+inside packages, which is exactly pymupdf's case. The build may succeed
+and the exe may run fine; or it may fail with a runtime ImportError or
+RuntimeError. The cost of testing is one ~15-30 min build (much cheaper
+than the prior ~2 hr attempts). If the experiment fails, the next move
+is a PyInstaller backend.
 
 ## What's new in 1.7.2
 

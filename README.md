@@ -29,31 +29,36 @@ All build artefacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the
 | ----------------- | --------------------- | --------------------------------------- |
 | Build mode        | `--onefile`           | `--standalone`                          |
 | Compiler (Win)    | `--compiler=auto`     | `--compiler=msvc\|mingw64\|clang`       |
-| Heavy-C projects  | routed to MinGW64     | (none — MSVC cannot build them)         |
+| Heavy-C projects  | bytecode mode (no C compile)  | (none — only sane option) |
 | Python            | Highest stable 3.10–3.14 | `--python /path/to/python`           |
 | Parallel jobs     | CPU count             | `--jobs N`                              |
 
-### Heavy-C module handling
+### Heavy-C module handling (v1.7.3 experiment)
 
-A few packages ship huge **C source** that Nuitka recompiles into one
-enormous translation unit. The canonical case is `pymupdf` — its
-`mupdf.c` is ~2.2M lines. MSVC's compiler heap fails on it (`C1002`);
-GCC/MinGW64 compiles it fine (slowly).
+A few packages — `pymupdf` is the canonical case — ship a giant SWIG
+wrapper that Nuitka would translate into ~2.2M lines of C. Every C
+compiler runs out of memory on it (MSVC `C1002`, MinGW64 `cc1.exe:
+out of memory`), regardless of RAM or pagefile.
 
-The build script scans `requirements.txt`, `pyproject.toml`, and the
-entry-point's imports for these. When found, `--compiler=auto` **routes
-the build to MinGW64**. The module is compiled and bundled normally —
-the result is a fully standalone exe. A pymupdf build takes ~2 hours.
+The build script detects these in `requirements.txt`, `pyproject.toml`,
+or the entry file's imports and appends
+`--noinclude-custom-mode=<target>:bytecode` so Nuitka ships the offending
+submodule as plain Python bytecode (`.pyc`) instead of compiling it.
+CPython interprets it at runtime; the prebuilt native `.pyd` that
+pymupdf actually calls is bundled by Nuitka's dll-files plugin. No giant
+C, no OOM, ~30-min build instead of 2+ hours.
 
 This is *not* "any large package". opencv-python, tensorflow, torch,
-scipy, pandas, etc. ship prebuilt wheels; Nuitka never recompiles them,
-so they never triggered `C1002`. Only source-shipping packages
-(pymupdf) are in the registry.
+scipy, pandas, etc. ship prebuilt wheels and were never the problem.
 
-The script does **not** exclude heavy-C modules via
-`--nofollow-import-to` — that would drop them from the bundle and the
-exe would crash at startup. See `HEAVY_C_MODULES` in `build.py` to
-register a new offender, and `PROJECT_MEMORY.md` for the full history.
+**Source protection note:** your code stays Nuitka-compiled (machine
+code). Only the SWIG wrapper — already public on PyPI — is in bytecode
+form. Nothing of your IP is exposed.
+
+**Caveat:** Nuitka's maintainer has flagged the `bytecode` mode as
+"largely untested" for submodules in packages. If the exe crashes at
+startup, this experiment failed and the next move is a PyInstaller
+backend. See `PROJECT_MEMORY.md` for the full history.
 
 ---
 
