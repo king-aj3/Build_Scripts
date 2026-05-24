@@ -262,7 +262,7 @@ auto-detect.
 
 ---
 
-## 7. Heavy-C module handling (v1.7.3 experiment)
+## 7. Heavy-C module handling
 
 A few Python packages — `pymupdf` is the canonical case — ship a giant
 SWIG-generated Python wrapper (`mupdf.py`) that Nuitka would translate
@@ -276,7 +276,7 @@ scipy, pandas, lxml, etc. ship *prebuilt* `.pyd` / `.so` wheels — Nuitka
 copies those as-is and never recompiles them, so they never trigger this
 failure.
 
-**v1.7.3 approach:** stop compiling the wrapper to C. The script appends
+**The approach:** stop compiling the wrapper to C. The script appends
 `--noinclude-custom-mode=<target>:bytecode` to the Nuitka command. Nuitka
 then ships that submodule as plain Python bytecode (`.pyc`); CPython
 interprets it at runtime; the prebuilt native `.pyd` that pymupdf
@@ -303,16 +303,15 @@ fully protected against casual reverse engineering. The only thing
 shipped as bytecode is `pymupdf.mupdf`, which is the SWIG wrapper —
 already open-source on PyPI, so nothing of *your* IP is exposed.
 
-### Caveat
+### If the bytecode path ever stops working
 
-Nuitka's maintainer has stated the `bytecode` mode is "largely untested
-and unsupported" for submodules inside packages, which is exactly
-pymupdf's case. The build may succeed and the exe may run cleanly; or
-the exe may crash at startup with `ImportError` /
-`RuntimeError: Compiled function bytecode used`. The cost of finding out
-is one ~30-min build. If the experiment fails, the next move is a
-PyInstaller backend (no C compilation; recorded in PROJECT_MEMORY open
-items).
+This approach is confirmed working for pymupdf as of v1.8.0. Nuitka's
+maintainer has flagged `bytecode` mode as "largely untested" for
+submodules inside packages, so a future package or Nuitka version could
+break it — the failure mode would be the exe crashing at startup with
+`ImportError` or `RuntimeError: Compiled function bytecode used`. If
+that happens, the documented fallback is a PyInstaller backend (no C
+compilation; recorded in PROJECT_MEMORY open items).
 
 ### See what was detected
 

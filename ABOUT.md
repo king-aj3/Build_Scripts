@@ -1,9 +1,44 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.7.3
+**Script version:** 1.8.0
 **Date:** 2026-05-24
 **License:** Internal use
+
+## What's new in 1.8.0
+
+**Heavy-C bytecode-mode approach confirmed working — locked in.**
+The v1.7.3 experiment produced a working 202 MB standalone exe in
+~26 minutes on a 32 GB Windows machine (MinGW64, `--lto=yes`,
+`--jobs=16`), with the application opening normally and `pymupdf`
+loading at runtime. The Nuitka maintainer's "untested for
+submodules-in-packages" warning did not manifest for pymupdf's case.
+
+v1.8.0 promotes the approach from experimental to default:
+
+- The pre-flight RAM detection and commit-limit pause from v1.7.1/1.7.2
+  are removed (101 lines of dead code excised). They were workarounds
+  for compiling `mupdf.c`, which v1.7.3 sidesteps entirely.
+- `_tune_heavy_c_build()`, `get_total_ram_gb()`, `get_commit_limit_gb()`,
+  `_win_memstatus()`, and `HEAVY_C_MIN_COMMIT_GB` are gone.
+- The "experiment" framing is removed from banners, audit, and BUILD
+  FAILED footer.
+- `HEAVY_C_MODULES` dict and `--noinclude-custom-mode=:bytecode`
+  injection are unchanged from v1.7.3.
+
+The PyInstaller backend remains a documented fallback (in
+PROJECT_MEMORY open items) if a future package proves resistant to
+bytecode mode, but no longer flagged as imminent — Nuitka with the
+bytecode workaround is the working solution.
+
+### Build characteristics
+
+- **Time**: ~25-30 minutes for a heavy-C onefile (pymupdf + PySide6 +
+  matplotlib + opencv).
+- **Size**: ~200 MB onefile, ~770 MB decompressed.
+- **Compiler**: MSVC or MinGW64 — bytecode mode is compiler-agnostic.
+- **Source protection**: your code is Nuitka-compiled to native machine
+  code; only pymupdf's public SWIG wrapper ships as bytecode.
 
 ## What's new in 1.7.3 (experiment)
 

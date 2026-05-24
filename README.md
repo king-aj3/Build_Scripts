@@ -33,7 +33,7 @@ All build artefacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the
 | Python            | Highest stable 3.10–3.14 | `--python /path/to/python`           |
 | Parallel jobs     | CPU count             | `--jobs N`                              |
 
-### Heavy-C module handling (v1.7.3 experiment)
+### Heavy-C module handling
 
 A few packages — `pymupdf` is the canonical case — ship a giant SWIG
 wrapper that Nuitka would translate into ~2.2M lines of C. Every C
@@ -55,10 +55,10 @@ scipy, pandas, etc. ship prebuilt wheels and were never the problem.
 code). Only the SWIG wrapper — already public on PyPI — is in bytecode
 form. Nothing of your IP is exposed.
 
-**Caveat:** Nuitka's maintainer has flagged the `bytecode` mode as
-"largely untested" for submodules in packages. If the exe crashes at
-startup, this experiment failed and the next move is a PyInstaller
-backend. See `PROJECT_MEMORY.md` for the full history.
+**Fallback:** Nuitka's maintainer has flagged the `bytecode` mode as
+"largely untested" for submodules in packages, so a future package could
+break it. The documented fallback is a PyInstaller backend — see
+`PROJECT_MEMORY.md` open items.
 
 ---
 

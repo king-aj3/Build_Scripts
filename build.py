@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.7.3"
+SCRIPT_VERSION    = "1.8.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -84,7 +84,7 @@ _ICON_MAC  = ["assets/icon.icns", "resources/icon.icns", "icon.icns"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  HEAVY-C MODULE REGISTRY  (v1.7.3 experiment: bytecode mode)
+#  HEAVY-C MODULE REGISTRY  (v1.8.0)
 # ═════════════════════════════════════════════════════════════════════════════
 #
 # Packages that ship huge generated C *source* which Nuitka would recompile
@@ -95,29 +95,26 @@ _ICON_MAC  = ["assets/icon.icns", "resources/icon.icns", "icon.icns"]
 # Nuitka bundles as-is via its dll-files plugin - so only the wrapper .py is
 # the problem.
 #
-# v1.7.3 approach: pass `--noinclude-custom-mode=<target>:bytecode` to Nuitka.
+# The script passes `--noinclude-custom-mode=<target>:bytecode` to Nuitka.
 # That tells Nuitka to ship the target submodule as plain Python bytecode
 # (.pyc) instead of compiling it to C. CPython interprets it at runtime; the
-# prebuilt .pyd loads through it normally. No giant C, no OOM, MSVC works.
-#
-# Caveat: the bytecode mode is officially "largely untested and unsupported"
-# for submodules inside packages (per Nuitka maintainer). If the resulting
-# .exe crashes at startup with ImportError or RuntimeError, this experiment
-# has failed and the next move is the PyInstaller backend.
+# prebuilt .pyd loads through it normally. No giant C, no OOM. Works on both
+# MSVC and MinGW64. A heavy-C build now completes in ~25-30 min.
 #
 # Why earlier approaches were dropped:
-#   - --nofollow-import-to (v1.6.0): excludes the module entirely; ImportError
-#     at runtime. Wrong for standalone builds.
-#   - Route heavy-C to MinGW64 + compile mupdf.c (v1.5/v1.7.0-1.7.2): the
-#     compile itself OOMs cc1.exe at ~10 MB even on 32 GB RAM + 32 GB pagefile,
-#     because the failure is a per-process address-space ceiling, not RAM
-#     headroom. Proven empirically across multiple machines.
+#   - --nofollow-import-to (v1.6.0): excludes the module entirely; runtime
+#     ImportError in standalone mode. Wrong for standalone builds.
+#   - Route to MinGW64 + actually compile mupdf.c (v1.5/1.7.0-1.7.2): the
+#     compile itself OOMs cc1.exe at the same ~10 MB allocation even on
+#     32 GB RAM + 32 GB pagefile (64 GB commit). Proven empirically across
+#     two machines and three job configurations - a per-process address-space
+#     ceiling, not a system-tuning problem.
 #
 # Format: { detect_name : bytecode_target_submodule }
 # Detection matches case-insensitively against import names and pip
 # distribution names (with -/_ normalisation).
 HEAVY_C_MODULES: dict = {
-    "pymupdf": "pymupdf.mupdf",   # SWIG wrapper compiled to 2.2M lines of C
+    "pymupdf": "pymupdf.mupdf",   # SWIG wrapper - 2.2M lines of C if compiled
     "fitz":    "pymupdf.mupdf",   # legacy import alias for pymupdf
 }
 
@@ -620,107 +617,6 @@ def detect_heavy_c_modules(project_dir: Path, cfg: "Config") -> dict:
     return hits
 
 
-def _win_memstatus():
-    """Return a populated MEMORYSTATUSEX (Windows) or None."""
-    if not IS_WIN:
-        return None
-    try:
-        class _MEMSTAT(ctypes.Structure):
-            _fields_ = [("dwLength",                ctypes.c_ulong),
-                        ("dwMemoryLoad",            ctypes.c_ulong),
-                        ("ullTotalPhys",            ctypes.c_ulonglong),
-                        ("ullAvailPhys",            ctypes.c_ulonglong),
-                        ("ullTotalPageFile",        ctypes.c_ulonglong),
-                        ("ullAvailPageFile",        ctypes.c_ulonglong),
-                        ("ullTotalVirtual",         ctypes.c_ulonglong),
-                        ("ullAvailVirtual",         ctypes.c_ulonglong),
-                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-        m = _MEMSTAT()
-        m.dwLength = ctypes.sizeof(_MEMSTAT)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
-            return m
-    except Exception:
-        pass
-    return None
-
-
-def get_total_ram_gb() -> "float | None":
-    """Total physical RAM in GiB, or None if it cannot be determined.
-
-    Stdlib only - no psutil dependency.
-      Windows : GlobalMemoryStatusEx via ctypes
-      Linux   : os.sysconf SC_PHYS_PAGES * SC_PAGE_SIZE
-      macOS   : same sysconf keys where available
-    """
-    try:
-        if IS_WIN:
-            m = _win_memstatus()
-            if m is not None:
-                return m.ullTotalPhys / (1024 ** 3)
-        else:
-            return (os.sysconf("SC_PAGE_SIZE")
-                    * os.sysconf("SC_PHYS_PAGES")) / (1024 ** 3)
-    except Exception:
-        pass
-    return None
-
-
-def get_commit_limit_gb() -> "float | None":
-    """Windows commit limit (physical RAM + pagefile) in GiB, else None.
-
-    This is the ceiling on how much memory all processes can reserve.
-    `cc1.exe: out of memory` happens when the C compiler cannot commit
-    within this limit - so for a heavy-C build it matters more than RAM
-    alone. ullTotalPageFile from GlobalMemoryStatusEx *is* the system
-    commit limit (despite the name). Non-Windows: None.
-    """
-    m = _win_memstatus()
-    if m is not None:
-        return m.ullTotalPageFile / (1024 ** 3)
-    return None
-
-
-# A single cc1.exe compiling pymupdf's mupdf.c at -O3 can need well over
-# 10 GB. If the Windows commit limit is below this, the build is likely to
-# fail with 'cc1.exe: out of memory' - warn before the (multi-hour) build.
-HEAVY_C_MIN_COMMIT_GB = 40.0
-
-
-def _tune_heavy_c_build(jobs_explicit: "int | None", lto_cfg: str) -> tuple:
-    """Auto-tune (jobs, lto) for a heavy-C build.
-
-    Heavy-C builds compile one pathological translation unit (pymupdf's
-    mupdf.c, ~2.2M lines) whose cc1.exe needs many GB. Running it
-    concurrently with other large units multiplies peak memory and causes
-    'cc1.exe: out of memory'.
-
-    Decision: heavy-C builds default to --jobs=1 - each huge unit then
-    compiles alone with the whole machine's memory available. Compile time
-    is not a concern for these (rare, release-only) builds. A RAM-derived
-    job count was tried (v1.7.1) and was too optimistic; serializing is the
-    only reliable choice.
-
-    Returns (jobs, lto, ram_gb). Explicit user choices always win:
-    --jobs N is honoured as-is; an explicit lto = "yes"/"no" overrides.
-    """
-    ram = get_total_ram_gb()
-
-    # ── Jobs: serialize heavy-C builds ────────────────────────────────
-    jobs = jobs_explicit if jobs_explicit is not None else 1
-
-    # ── LTO ───────────────────────────────────────────────────────────
-    if lto_cfg in ("yes", "no"):
-        lto = lto_cfg                              # explicit config wins
-    elif ram is None:
-        lto = "no"                                 # unknown -> safe
-    else:
-        # LTO's link stage is very memory-hungry on a heavy-C program.
-        # Keep it only when RAM clearly affords it. Runtime gain for a GUI
-        # app is negligible, so 'off' below the threshold costs nothing real.
-        lto = "yes" if ram >= 32.0 else "no"
-
-    return jobs, lto, ram
-
 
 def _resolve_compiler_auto(auto_yes: bool = False) -> str:
     """
@@ -730,9 +626,9 @@ def _resolve_compiler_auto(auto_yes: bool = False) -> str:
     Tier 2: MSVC missing, user agrees to install + install OK -> "msvc"
     Tier 3: anything else            -> "mingw64" (will use Python <3.13)
 
-    Note: heavy-C modules (pymupdf) no longer influence compiler choice -
-    v1.7.3 uses --noinclude-custom-mode=...:bytecode so the giant translation
-    unit is never generated, and MSVC can handle the rest fine.
+    Note: heavy-C modules (pymupdf) do not influence compiler choice.
+    They are shipped as bytecode via --noinclude-custom-mode, so the
+    giant translation unit is never generated and any compiler is fine.
     """
     if not IS_WIN:
         return ""   # Linux/macOS: no compiler flag, system default is used
@@ -1200,12 +1096,9 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
               jobs: int | None = None, forced_python=None, ci: bool = False,
               auto_yes: bool = False, force_msvc: bool = False) -> bool:
     # ── Heavy-C module detection ──────────────────────────────────────────
-    # Packages that ship huge C source MSVC cannot compile (C1002). The build
-    # is routed to MinGW64, which compiles them - slowly but correctly. The
-    # module IS compiled and bundled; we do NOT exclude it (that breaks the
-    # standalone exe).
+    # Packages that ship a huge SWIG-generated wrapper (pymupdf) - see the
+    # HEAVY_C_MODULES block near the top of this file for the full story.
     heavy_c = detect_heavy_c_modules(project_dir, cfg)
-    jobs_explicit = jobs   # None unless the user passed --jobs N
 
     # ── Resolve the compiler ──────────────────────────────────────────────
     # Precedence: --force-msvc > --compiler=auto resolution > explicit value.
@@ -1220,13 +1113,12 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
     elif compiler == "auto":
         compiler = _resolve_compiler_auto(auto_yes=auto_yes)
 
-    # ── Heavy-C: enable Nuitka bytecode mode (v1.7.3 experiment) ──────────
-    # Instead of compiling pymupdf.mupdf (which generates 2.2M lines of C and
-    # OOMs cc1.exe/cl.exe regardless of RAM), tell Nuitka to ship that
-    # submodule as plain Python bytecode (.pyc). CPython interprets it at
-    # runtime; the prebuilt .pyd that pymupdf actually calls into is bundled
-    # by Nuitka's dll-files plugin as usual. No giant C, no OOM, no slow
-    # compile, no compiler restriction.
+    # ── Heavy-C: ship as Nuitka bytecode instead of compiling to C ────────
+    # Inject --noinclude-custom-mode=<target>:bytecode for each heavy module.
+    # Nuitka then bundles the target submodule as .pyc; CPython interprets it
+    # at runtime; the prebuilt .pyd that pymupdf actually calls is bundled
+    # by the dll-files plugin as usual. No giant C is generated, both MSVC
+    # and MinGW64 handle the rest of the build at normal speed.
     bytecode_flags: list = []
     nofollow_conflicts: list = []
     if heavy_c:
@@ -1235,7 +1127,6 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
             bytecode_flags.append(f"--noinclude-custom-mode={t}:bytecode")
             if t in set(cfg.nofollow_imports):
                 nofollow_conflicts.append(t)
-        # Inject the bytecode-mode flags into the Nuitka command line.
         cfg.extra_flags = list(cfg.extra_flags) + bytecode_flags
 
     if jobs is None:
@@ -1248,7 +1139,7 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
     say(f"  Compiler  : {compiler if IS_WIN else 'system default'}")
     if heavy_c:
         say(f"  Heavy-C   : {', '.join(sorted(heavy_c))}")
-        say(f"              v1.7.3 experiment: shipping as bytecode (no C compile)")
+        say(f"              shipped as bytecode (no C compile of wrapper)")
         say(f"              " + "  ".join(bytecode_flags))
     say(f"  Jobs      : {jobs}")
     say(f"  Entry     : {cfg.entry}\n")
@@ -1257,8 +1148,8 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         warn(f"Conflict: nofollow_imports declares "
              f"{', '.join(nofollow_conflicts)} but bytecode mode needs to "
              f"include them.")
-        warn("Remove those entries from build_config.toml's nofollow_imports.")
-        warn("They were the workaround in v1.6.0; v1.7.3 supersedes that.")
+        warn("Remove those entries from build_config.toml's nofollow_imports")
+        warn("(they were the discarded v1.6.0 workaround).")
 
     check_compiler(compiler)
 
@@ -1308,10 +1199,10 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         say("  Full compiler output captured above and in build.log.")
         say("  Try:  python build.py <project> --clean --clean-env --onefile")
         if heavy_c:
-            say(f"        Heavy-C modules detected ({', '.join(sorted(heavy_c))}).")
-            say("        v1.7.3 ships them as bytecode (no C compile). If the")
-            say("        build/runtime broke because of this, the experiment")
-            say("        failed - next step is the PyInstaller backend.")
+            say(f"        Heavy-C modules detected ({', '.join(sorted(heavy_c))})")
+            say("        are shipped as bytecode (no C compile). If the build")
+            say("        or runtime broke specifically because of this, the")
+            say("        next fallback is the PyInstaller backend.")
         if IS_WIN and compiler == "mingw64":
             say("        Early header errors (corecrt.h)? Nuitka's GCC")
             say("        download may be corrupt - delete and re-download:")
@@ -1735,7 +1626,7 @@ def audit(project_dir: Path, cfg: Config) -> bool:
     if heavy_c:
         info(f"Detected: {', '.join(sorted(heavy_c))}")
         targets = sorted(set(heavy_c.values()))
-        say(f"        Will be shipped as bytecode (v1.7.3 experiment):")
+        say(f"        Will be shipped as bytecode (no C compile):")
         for t in targets:
             say(f"          --noinclude-custom-mode={t}:bytecode")
         say("        No C-compile of the giant SWIG wrapper; MSVC handles")

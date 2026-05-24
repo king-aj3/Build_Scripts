@@ -128,18 +128,17 @@ If both are installed, Nuitka picks the wrong one. The build script
 auto-uninstalls PyQt6 from `build_env/` when PySide6 is the configured
 plugin. Set `plugins = ["pyqt6"]` in TOML to invert this.
 
-### Heavy-C / pymupdf builds (v1.7.3 experiment)
+### Heavy-C / pymupdf builds
 The script appends `--noinclude-custom-mode=pymupdf.mupdf:bytecode` for
 projects using pymupdf. Nuitka ships `mupdf.py` as plain bytecode instead
 of compiling it to ~2.2M lines of C (which OOMs every C compiler on every
-machine tested). The build is normal-speed and uses your default compiler
-(MSVC).
+machine tested). The build runs at normal speed (~25-30 min) on either
+MSVC or MinGW64.
 
-If the built exe crashes at startup with `ImportError` or
-`RuntimeError: Compiled function bytecode used`, the bytecode-mode
-experiment failed for this case — Nuitka's maintainer flagged this mode
-as "largely untested" for submodules-in-packages. Next move: PyInstaller
-backend (recorded in PROJECT_MEMORY open items).
+If a built exe ever crashes at startup with `ImportError` or
+`RuntimeError: Compiled function bytecode used`, the bytecode-mode path
+has failed for that package — fallback is the PyInstaller backend
+(see `PROJECT_MEMORY.md` open items).
 
 ### MinGW64 build fails early — CRT headers won't compile
 Symptom: errors like `corecrt.h: expected ';' before 'typedef'` right at

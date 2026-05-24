@@ -249,20 +249,25 @@ Consequences:
 - `_resolve_compiler_auto` has no special heavy-C tier — MSVC is fine.
 - The `_tune_heavy_c_build` machinery (RAM-aware jobs, commit-limit
   pre-flight, 10-second pause) is no longer invoked for heavy-C builds.
-  The functions remain in the file as dead code for now; if v1.7.3
-  succeeds and locks in as v1.8.0, they get removed.
 
-**Status: experimental.** Per Nuitka maintainer's public comments, the
-`bytecode` mode is "largely untested and unsupported" for submodules
-inside packages — which is exactly pymupdf's case. Failure modes:
+### v1.8.0 — bytecode approach confirmed, dead code removed
 
-- Build itself errors out (Nuitka refuses the flag, or generates broken
-  C that fails earlier in the pipeline).
-- Build succeeds but the exe crashes at startup with `ImportError` or
-  `RuntimeError: Compiled function bytecode used`.
+The v1.7.3 experiment produced a working **202 MB onefile in
+~26 minutes** on a 32 GB Windows machine (MinGW64, `--lto=yes`,
+`--jobs=16`); the application opened normally and pymupdf loaded at
+runtime. The Nuitka maintainer's "submodules-in-packages" warning did
+not manifest for pymupdf's case.
 
-If either happens, this experiment has failed and the committed next
-step is the PyInstaller backend — see open items.
+v1.8.0 promotes the approach to default and removes 101 lines of dead
+code: `_tune_heavy_c_build()`, `get_total_ram_gb()`,
+`get_commit_limit_gb()`, `_win_memstatus()`, and `HEAVY_C_MIN_COMMIT_GB`.
+These were workarounds for compiling `mupdf.c` itself, which the
+bytecode path sidesteps entirely. The "experiment" framing is removed
+from banners, audit output, and the BUILD FAILED footer.
+
+The PyInstaller backend remains a documented fallback (in open items)
+if a future package proves resistant to bytecode mode, but is no longer
+the imminent next step it was during the v1.7.x failures.
 
 ### Why Nuitka output is streamed into build.log (v1.5.2, kept)
 
@@ -430,11 +435,13 @@ CI should pre-install Python via `setup-python` action).
 
 ## Open items / future work
 
-- **PyInstaller backend.** Evaluated as an alternative for pymupdf
-  projects (PyInstaller bundles the prebuilt binary, no C compilation,
-  ~10-min builds vs. ~2 hrs). The user chose to stay on Nuitka. If the
-  2-hour pymupdf build time becomes unacceptable, a `backend =
-  "pyinstaller"` TOML key remains the obvious next step.
+- **PyInstaller backend (fallback).** v1.8.0's bytecode-mode handling
+  for pymupdf is confirmed working, so this is no longer the imminent
+  next step. It remains the documented escape if a future package proves
+  resistant to bytecode mode, or if Nuitka's bytecode-in-packages support
+  ever regresses. Design: `backend = "pyinstaller"` per-project TOML key,
+  same schema and PyCharm tool; ~10-min builds; weaker source protection
+  (bytecode decompilable). Add only when needed.
 - **Corrupt-GCC self-heal.** A MinGW64 build that fails early with C
   header errors is usually a corrupt Nuitka GCC download. The script
   currently tells the user to clear the cache manually; it could detect
