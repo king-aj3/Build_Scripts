@@ -5,6 +5,26 @@ that touch the architecture.
 
 ---
 
+## v1.8.2 — RAM-aware default jobs (zstd onefile OOM fix)
+
+A My_LLM onefile build on a Threadripper 3990X (64C/128T, 32 GB) failed at
+the final stage with `zstandard ... ZstdError: not enough memory`. The C
+compile and link had succeeded; only the zstd payload compression OOM'd.
+Root cause: the default `jobs = multiprocessing.cpu_count()` returned 128,
+and with LTO=auto→yes on Linux, that many concurrent link jobs left no RAM
+for zstd to allocate its compression context. Verified by a manual run with
+`--jobs=4 --lto=no`, which compressed fine (16.5 MB → 5.7 MB, 34.5%).
+
+Fix: new `_safe_jobs()` / `_total_ram_gb()` helpers cap the *default* job
+count to `min(cpu, (RAM_GB - 4) / 1.5, 32)`. Rationale for the formula: LTO
+links run ~1.5 GB each, keep 4 GB headroom, never exceed 32 (diminishing
+returns + safety). Explicit `--jobs N` bypasses the cap entirely. LTO logic
+and all names left unchanged. This is the general-build path only; the old
+heavy-C `--jobs=1` serialize machinery was already removed in 1.8.x (heavy
+modules are handled via `--nofollow-import-to`/bytecode).
+
+---
+
 ## Why a single common script instead of per-project scripts
 
 The three predecessor scripts (`build_Prompt.py`, `build_TLZN.py`,

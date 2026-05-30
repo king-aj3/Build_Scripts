@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.1"
+SCRIPT_VERSION    = "1.8.2"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -182,6 +182,54 @@ OS_NAME, OS_ARCH = _detect_os()
 IS_WIN = OS_NAME == "Windows"
 IS_MAC = OS_NAME == "Darwin"
 IS_LIN = OS_NAME == "Linux"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  RAM-AWARE PARALLELISM  (v1.8.2)
+#  cpu_count() alone (e.g. 128 on a 3990X) + LTO links exhausted RAM and made
+#  zstd onefile compression fail with "not enough memory". Cap jobs by RAM.
+# ═════════════════════════════════════════════════════════════════════════════
+def _total_ram_gb():
+    """Best-effort total physical RAM in GB; None if undetectable."""
+    try:
+        if IS_LIN:
+            with open("/proc/meminfo") as fh:
+                for line in fh:
+                    if line.startswith("MemTotal:"):
+                        return int(line.split()[1]) / (1024 * 1024)
+        if IS_WIN:
+            class _MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            ms = _MS(); ms.dwLength = ctypes.sizeof(_MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+            return ms.ullTotalPhys / (1024 ** 3)
+        # macOS / generic POSIX
+        return (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024 ** 3)
+    except Exception:
+        return None
+
+
+def _safe_jobs(requested):
+    """RAM-aware parallel C-job count. An explicit --jobs value is honored
+    as-is; otherwise jobs are capped so LTO links (~1.5 GB each) leave ~4 GB
+    headroom. Prevents the zstd 'not enough memory' onefile crash on
+    high-core / modest-RAM machines."""
+    cpu = multiprocessing.cpu_count()
+    if requested is not None:
+        return max(1, requested)
+    ram = _total_ram_gb()
+    if not ram:
+        return min(cpu, 8)               # unknown RAM: stay conservative
+    budget = int((ram - 4) / 1.5)        # ~4 GB headroom, ~1.5 GB per LTO job
+    return max(1, min(cpu, budget, 32))  # never below 1, never silly-high
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1207,8 +1255,7 @@ def run_build(project_dir: Path, cfg: Config, onefile: bool, compiler: str,
         package_data_flags = [f"--include-package-data={t}" for t in targets]
         cfg.extra_flags = list(cfg.extra_flags) + package_data_flags
 
-    if jobs is None:
-        jobs = multiprocessing.cpu_count()
+    jobs = _safe_jobs(jobs)
 
     mode = "One-File" if onefile else "Standalone Folder"
     banner(f"{cfg.name} v{cfg.version} - Nuitka Build ({mode})")

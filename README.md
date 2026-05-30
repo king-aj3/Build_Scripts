@@ -31,7 +31,7 @@ All build artefacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the
 | Compiler (Win)    | `--compiler=auto`     | `--compiler=msvc\|mingw64\|clang`       |
 | Heavy-C projects  | bytecode mode (no C compile)  | (none — only sane option) |
 | Python            | Highest stable 3.10–3.14 | `--python /path/to/python`           |
-| Parallel jobs     | CPU count             | `--jobs N`                              |
+| Parallel jobs     | RAM-aware cap         | `--jobs N`                              |
 
 ### Heavy-C module handling
 

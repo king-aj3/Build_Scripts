@@ -1,9 +1,21 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.1
-**Date:** 2026-05-24
+**Script version:** 1.8.2
+**Date:** 2026-05-30
 **License:** Internal use
+
+## What's new in 1.8.2
+
+**RAM-aware default job count (fixes zstd "not enough memory" onefile
+crash).** The default was `multiprocessing.cpu_count()` — 128 on a
+Threadripper 3990X. With LTO on, 128 parallel link jobs exhausted a
+32 GB machine, and the onefile build died at the final zstd payload
+compression with `ZstdError: not enough memory` (the C compile and link
+had already succeeded). Jobs are now capped by available RAM: ~1.5 GB
+budgeted per LTO job, 4 GB headroom, hard ceiling of 32. On the 3990X
++ 32 GB this resolves to 18 jobs. An explicit `--jobs N` is still
+honored as-is, and LTO behavior is unchanged.
 
 ## What's new in 1.8.1
 

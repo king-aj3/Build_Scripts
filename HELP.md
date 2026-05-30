@@ -47,7 +47,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 | Flag            | Effect                                                  |
 | --------------- | ------------------------------------------------------- |
-| `--jobs N`      | Parallel C compile jobs. Default: CPU count for normal builds; `1` for heavy-C builds (pymupdf) so the giant unit compiles alone. An explicit value is honored as-is. |
+| `--jobs N`      | Parallel C compile jobs. Default: RAM-aware cap (~1.5 GB per LTO job, 4 GB headroom, max 32) so high-core / modest-RAM machines do not OOM. An explicit value is honored as-is. |
 | `--python PATH` | Force a specific interpreter (overrides auto-discovery).|
 
 ## Common recipes
