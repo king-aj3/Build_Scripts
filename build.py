@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.2"
+SCRIPT_VERSION    = "1.8.3"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1464,6 +1464,22 @@ def init_config(project_dir: Path, force: bool = False,
     icon_win    = _autodetect_icon(project_dir, _ICON_WIN)
     icon_mac    = _autodetect_icon(project_dir, _ICON_MAC)
 
+    # ── Preserve curated values from an existing build_config.toml ─────────
+    # So `--force --init` REFRESHES detection without discarding hand-added
+    # entries (custom data_dirs like config/ or console/web, an explicit entry,
+    # or [src,dst] data_files). Auto-detection only fills what isn't already set.
+    _existing = {}
+    if target == "build_config":
+        _bc_path = project_dir / CONFIG_FILENAME
+        if _bc_path.is_file():
+            _existing = _read_toml(_bc_path)
+    _ex_app = _existing.get("app", {})    if isinstance(_existing, dict) else {}
+    _ex_nk  = _existing.get("nuitka", {}) if isinstance(_existing, dict) else {}
+    if _ex_app.get("entry"):
+        entry = _ex_app["entry"]
+    _preserved_dirs  = _ex_nk.get("data_dirs")  or None
+    _preserved_files = _ex_nk.get("data_files") or None
+
     # GUI plugin detection from requirements.txt
     plugins = []
     req_file = project_dir / REQUIREMENTS_NAME
@@ -1541,16 +1557,31 @@ def init_config(project_dir: Path, force: bool = False,
     L.append("# automatically (build routes to MinGW64); do NOT list it here.")
     L.append("nofollow_imports = []")
     L.append("")
-    if detected_dirs:
-        L.append(f"# Auto-detected from project: {', '.join(detected_dirs)}")
-        L.append(f"data_dirs        = {_toml_array(detected_dirs)}")
+    _dirs = _preserved_dirs if _preserved_dirs is not None else detected_dirs
+    if _dirs:
+        if _preserved_dirs is not None:
+            L.append("# Preserved from your existing build_config.toml")
+        else:
+            L.append(f"# Auto-detected from project: {', '.join(detected_dirs)}")
+        _parts = []
+        for _d in _dirs:
+            if isinstance(_d, (list, tuple)) and len(_d) == 2:
+                _parts.append(f'["{_d[0]}", "{_d[1]}"]')
+            else:
+                _parts.append(f'"{_d}"')
+        L.append("data_dirs        = [" + ", ".join(_parts) + "]")
     else:
         L.append("data_dirs        = []")
     L.append("")
-    if detected_files:
+    _files = _preserved_files if _preserved_files is not None else \
+        [[f, f] for f in detected_files]
+    if _files:
         L.append("data_files       = [")
-        for f in detected_files:
-            L.append(f'    ["{f}", "{f}"],')
+        for _f in _files:
+            if isinstance(_f, (list, tuple)) and len(_f) == 2:
+                L.append(f'    ["{_f[0]}", "{_f[1]}"],')
+            else:
+                L.append(f'    ["{_f}", "{_f}"],')
         L.append("]")
     else:
         L.append("data_files       = []")

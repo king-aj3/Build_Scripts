@@ -526,3 +526,12 @@ CI should pre-install Python via `setup-python` action).
   to fail fast when a dep needs compilation. Currently silent and slow.
 - **Output directory override.** `--output-dir` flag could redirect `dist/`
   somewhere else (useful for CI publishing).
+
+## Changelog
+- 2026-05-31 — v1.8.3: `--init` now PRESERVES an existing build_config.toml's
+  [app].entry and [nuitka].data_dirs / data_files when regenerating (incl. with
+  --force). Previously --force --init overwrote them with auto-detected values,
+  which silently dropped custom data dirs (e.g. config/, console/web) and reset
+  entry to main.py. Auto-detection still fills any values not already set;
+  fresh-project behavior unchanged. data_dirs/data_files render preserved
+  [src,dst] pairs correctly.

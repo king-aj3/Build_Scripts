@@ -187,3 +187,10 @@ in `nofollow_imports` in `build_config.toml`, and rebuild with
 `<project_dir>/build.log`. As of v1.5.2 it captures the **full Nuitka
 output**, including the C compiler / linker error that caused a failure.
 First place to look after any failed build.
+
+**Does `--force --init` wipe my custom data_dirs / entry?**
+No (v1.8.3+). `--init` preserves an existing build_config.toml's `[app].entry`
+and `[nuitka] data_dirs`/`data_files`; auto-detection only fills what isn't
+already set. Plain `--init` (no `--force`) still refuses to touch an existing
+file. To intentionally start fresh, delete build_config.toml first, then
+`--init`.
