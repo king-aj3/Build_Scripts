@@ -209,6 +209,8 @@ python build_all.py <project_dir> [orchestrator-opts] [-- build.py-flags]
 
 | Flag           | Effect                                                          |
 | -------------- | --------------------------------------------------------------- |
+| `--init`       | Generate a tailored `build_hosts.toml` (current OS enabled) in the project root, then exit. |
+| `--force`      | With `--init`: overwrite an existing file (your SSH host details are preserved). |
 | `--hosts PATH` | `build_hosts.toml` location (default: `<project>/build_hosts.toml`, then alongside `build_all.py`). |
 | `--only A,B`   | Build only the named host sections (e.g. `--only linux,windows`).|
 | `--no-pull`    | Skip `git pull`; build the working tree as-is.                  |
@@ -232,8 +234,11 @@ optionally `python`, `key`, `port`. See
 
 ### Troubleshooting
 
-**"No build_hosts.toml found"** — copy `examples/build_hosts.template.toml`
-to your project root and enable at least one host.
+**No `build_hosts.toml` yet** — you don't need to copy one. The first normal
+run auto-generates a tailored file (your current OS enabled as a local host);
+or run `build_all.py <project> --init` explicitly. Re-generate with `--init
+--force` (SSH host details are preserved). The template in
+`examples/build_hosts.template.toml` is just the full-option reference.
 
 **SSH host: "Permission denied" / hangs** — confirm key-based SSH works
 manually first: `ssh builder@host echo ok`. On Windows hosts, enable

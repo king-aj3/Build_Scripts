@@ -138,9 +138,10 @@ Outputs are collected per-OS so they never collide:
 ```
 
 `build.py` is unchanged — every one of its flags passes straight through
-after `--`. Start from `examples/build_hosts.template.toml`. With a single
-machine, enable just your own OS now and flip the others on as you add a
-VM / SSH host. **macOS needs Apple hardware** (or a GitHub Actions macOS
+after `--`. You don't hand-maintain `build_hosts.toml`: it's auto-generated
+in the project root on first run (current OS enabled), and regenerated with
+`--init --force` (SSH host details preserved). With a single machine, just
+your own OS builds now; flip the others on as you add a VM / SSH host. **macOS needs Apple hardware** (or a GitHub Actions macOS
 runner) — see `USER_GUIDE.md` → "macOS without a Mac".
 
 ---

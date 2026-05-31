@@ -2,9 +2,19 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.8.3  (build.py)
-**Orchestrator:** build_all.py v1.0.0
+**Orchestrator:** build_all.py v1.1.0
 **Date:** 2026-05-31
 **License:** Internal use
+
+## What's new — build_all.py v1.1.0
+
+**`build_hosts.toml` is now auto-generated, with `--init` / `--force`.**
+Mirrors `build.py`'s config handling so the host map isn't hand-copied or
+maintained per project. A normal run with no host map auto-writes a tailored
+one (current OS enabled as a local host); `--init` does it explicitly and
+`--init --force` regenerates while **preserving any SSH host details** the
+user added. The `examples/build_hosts.template.toml` stays as the
+full-option reference.
 
 ## What's new — build_all.py v1.0.0 (cross-OS orchestrator)
 

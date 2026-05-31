@@ -28,6 +28,11 @@ USAGE
 
 ORCHESTRATOR OPTIONS
 --------------------
+    --init          Generate a tailored build_hosts.toml (current OS enabled)
+                    in the project root, then exit. Auto-runs on a normal
+                    build too, if no build_hosts.toml exists yet.
+    --force         With --init: overwrite an existing build_hosts.toml.
+                    Remote-host (SSH) details you added are preserved.
     --hosts PATH    build_hosts.toml location (default: <project>/build_hosts.toml,
                     then alongside this script).
     --only A,B      Build only the named host sections.
@@ -41,9 +46,11 @@ CONFIG: see examples/build_hosts.template.toml
 from __future__ import annotations
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 try:
@@ -54,7 +61,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.0.0"
+ORCH_VERSION = "1.1.0"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -84,9 +91,7 @@ def die(msg: str, code: int = 2) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Config
 # ─────────────────────────────────────────────────────────────────────────────
-def load_hosts(project_dir: Path, explicit: str | None) -> tuple[dict, Path]:
-    if _toml is None:
-        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
+def _find_hosts_file(project_dir: Path, explicit: str | None) -> Path | None:
     candidates = []
     if explicit:
         candidates.append(Path(explicit).expanduser())
@@ -94,12 +99,18 @@ def load_hosts(project_dir: Path, explicit: str | None) -> tuple[dict, Path]:
     candidates.append(Path(__file__).resolve().parent / "build_hosts.toml")
     for c in candidates:
         if c.is_file():
-            with open(c, "rb") as fh:
-                return _toml.load(fh), c
-    die("No build_hosts.toml found. Looked in:\n    "
-        + "\n    ".join(str(c) for c in candidates)
-        + "\n  Copy examples/build_hosts.template.toml to your project root.")
-    return {}, Path()  # unreachable
+            return c
+    return None
+
+
+def load_hosts(project_dir: Path, explicit: str | None) -> tuple[dict, Path]:
+    if _toml is None:
+        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
+    found = _find_hosts_file(project_dir, explicit)
+    if not found:
+        die("No build_hosts.toml found (and auto-generate did not run).")
+    with open(found, "rb") as fh:
+        return _toml.load(fh), found
 
 
 def resolve_local_build_py(cfg: dict) -> Path:
@@ -108,6 +119,102 @@ def resolve_local_build_py(cfg: dict) -> Path:
     if not p.is_file():
         die(f"build.py not found at: {p}\n  Set `build_script` in build_hosts.toml.")
     return p
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  build_hosts.toml generation  (mirrors build.py --init / --force)
+# ─────────────────────────────────────────────────────────────────────────────
+def detect_local_os_arch() -> tuple[str, str]:
+    """(section_name, arch) for THIS machine, e.g. ('linux','x86_64')."""
+    p = sys.platform
+    name = "windows" if p == "win32" else "macos" if p == "darwin" else "linux"
+    m = (platform.machine() or "").lower()
+    arch = {"amd64": "amd64", "x86_64": "x86_64",
+            "aarch64": "arm64", "arm64": "arm64"}.get(m, m or _DEFAULT_ARCH[name])
+    if name == "windows" and arch == "x86_64":
+        arch = "amd64"          # template convention
+    return name, arch
+
+
+def _host_block(name: str, local_os: str, local_arch: str, ex: dict) -> str:
+    """Render one [hosts.<name>] block, preserving curated values in `ex`."""
+    g = lambda k, d="": ex.get(name, {}).get(k, d)
+    if name == local_os:
+        arch = g("arch") or local_arch
+        return textwrap.dedent(f"""\
+            # This machine. transport = "local" => builds right here, no SSH.
+            [hosts.{name}]
+            enabled   = true
+            transport = "local"
+            arch      = "{arch}"
+            """)
+    # Remote SSH host — keep whatever the user already filled in.
+    arch = g("arch") or _DEFAULT_ARCH[name]
+    enabled = "true" if g("enabled") is True else "false"
+    note = ""
+    if name == "macos":
+        note = ("# macOS needs Apple hardware (no legal VM elsewhere). No Mac?\n"
+                "# Use a GitHub Actions macos runner — see USER_GUIDE.md \u00a710.\n")
+    def field(k: str, default_stub: str) -> str:
+        v = g(k)
+        return f'{k:<9} = "{v}"' if v else default_stub
+    return (note + textwrap.dedent(f"""\
+        [hosts.{name}]
+        enabled   = {enabled}
+        transport = "ssh"
+        """)
+        + field("ssh",      '# ssh     = "builder@HOST"      # user@host or ~/.ssh/config alias') + "\n"
+        + field("repo",     '# repo    = "PATH/TO/REPO"      # cloned repo ON that host') + "\n"
+        + field("build_py", '# build_py= "PATH/TO/build.py"  # build.py ON that host') + "\n"
+        + field("python",   '# python  = "python3"           # interpreter ON that host') + "\n"
+        + (f'key       = "{g("key")}"\n' if g("key") else "")
+        + (f'port      = {g("port")}\n' if g("port") else "")
+        + f'arch      = "{arch}"\n')
+
+
+def generate_hosts_toml(project_dir: Path, build_py: Path, force: bool) -> bool:
+    """Write a tailored build_hosts.toml. Refuses to clobber unless force."""
+    dest = project_dir / "build_hosts.toml"
+    ex: dict = {}
+    if dest.is_file():
+        if not force:
+            error_existing(dest)
+            return False
+        if _toml is not None:
+            with open(dest, "rb") as fh:
+                data = _toml.load(fh)
+            ex = data.get("hosts", {}) if isinstance(data, dict) else {}
+        warn("--force given; regenerating (remote-host details preserved).")
+
+    local_os, local_arch = detect_local_os_arch()
+    order = [local_os] + [n for n in ("linux", "windows", "macos") if n != local_os]
+    blocks = "\n".join(_host_block(n, local_os, local_arch, ex) for n in order)
+    content = textwrap.dedent(f"""\
+        # build_hosts.toml — generated by build_all.py for {project_dir.name}
+        # ====================================================================
+        # Cross-OS build host map. Nuitka cannot cross-compile, so each OS
+        # binary is built on a host running that OS; outputs land in
+        # dist/<os>-<arch>/. Your current OS ({local_os}) is enabled below.
+        # Add SSH hosts for the others, then re-run. Regenerate any time with:
+        #   python <Build_Scripts>/build_all.py "{project_dir}" --init --force
+        # Full option reference: Build_Scripts/examples/build_hosts.template.toml
+
+        build_script = "{build_py}"
+
+        [git]
+        pull = true
+
+        """) + blocks
+    dest.write_text(content, encoding="utf-8")
+    step(f"wrote {dest}")
+    say(f"  enabled host: {local_os} (local, {local_arch}); others are SSH stubs.")
+    return True
+
+
+def error_existing(dest: Path) -> None:
+    sys.stderr.write(f"[build_all] ERROR: {dest.name} already exists.\n")
+    say("  Use --init --force to regenerate (remote-host details preserved),")
+    say("  or edit the existing file directly.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +349,10 @@ def main() -> None:
                     "per-OS binaries into dist/<os>-<arch>/.")
     ap.add_argument("project_dir", nargs="?", default=".")
     ap.add_argument("--hosts", metavar="PATH", help="build_hosts.toml path")
+    ap.add_argument("--init", action="store_true",
+                    help="Generate a tailored build_hosts.toml (current OS enabled) and exit")
+    ap.add_argument("--force", action="store_true",
+                    help="With --init: overwrite an existing build_hosts.toml (remote details preserved)")
     ap.add_argument("--only", metavar="A,B", help="Build only these host sections")
     ap.add_argument("--no-pull", action="store_true", help="Skip git pull")
     ap.add_argument("--dry-run", action="store_true", help="Print, do not build")
@@ -250,6 +361,18 @@ def main() -> None:
     project_dir = Path(args.project_dir).resolve()
     if not project_dir.is_dir():
         die(f"project dir not found: {project_dir}")
+
+    # --init: write a tailored build_hosts.toml and exit (mirrors build.py).
+    if args.init:
+        bp = resolve_local_build_py({})
+        ok = generate_hosts_toml(project_dir, bp, force=args.force)
+        sys.exit(0 if ok else 1)
+
+    # Locate the host map; if absent, auto-generate one (current OS enabled)
+    # so a fresh project "just builds" without hand-copying a template.
+    if not _find_hosts_file(project_dir, args.hosts):
+        step("no build_hosts.toml found — generating a default (current OS enabled).")
+        generate_hosts_toml(project_dir, resolve_local_build_py({}), force=False)
 
     cfg, cfg_path = load_hosts(project_dir, args.hosts)
     build_py = resolve_local_build_py(cfg)

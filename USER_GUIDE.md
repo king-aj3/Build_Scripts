@@ -426,17 +426,21 @@ runner is already an isolated environment.
 **and** macOS binaries, `build_all.py` runs `build.py` natively on each
 host and gathers the results into `<project>/dist/<os>-<arch>/`.
 
-### Step 1 — Add a host map
+### Step 1 — Host map (auto-created)
 
-Copy the template into your project root:
+You don't copy or maintain this by hand. `build_all.py` generates a tailored
+`build_hosts.toml` in the project root on the first run — or explicitly:
 
 ```bash
-cp <Build_Scripts>/examples/build_hosts.template.toml /path/to/project/build_hosts.toml
+python <Build_Scripts>/build_all.py /path/to/project --init
+python <Build_Scripts>/build_all.py /path/to/project --init --force   # regenerate
 ```
 
-Each `[hosts.<name>]` becomes an output folder `dist/<name>-<arch>/`.
-Enable the OS you can build today; leave the rest `enabled = false` until
-you have a host for them.
+The generated file enables your **current OS** as a local host; the other two
+are SSH stubs. `--force` regenerates while **preserving any SSH host details
+you've filled in** (same spirit as `build.py --init --force`). Each
+`[hosts.<name>]` maps to an output folder `dist/<name>-<arch>/`.
+`examples/build_hosts.template.toml` remains the full-option reference.
 
 ```toml
 [hosts.linux]

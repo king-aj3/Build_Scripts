@@ -32,6 +32,16 @@ The collector treats every *configured host label* as reserved, so a
 re-run never sweeps one host's output folder into another's — this is what
 makes repeated runs idempotent.
 
+**Why auto-generate build_hosts.toml (v1.1.0).** Requiring a hand-copied
+template per project is exactly the maintenance friction the single-script
+design exists to avoid. So the host map is generated like build.py's
+build_config.toml: written on first run (current OS enabled), with explicit
+--init / --force. --force preserves user-entered SSH host fields (ssh, repo,
+build_py, python, key, port, enabled) — only the local-OS section and
+build_script path are refreshed — because those remote details are
+environment knowledge auto-detection cannot recover, the same reason
+build.py --force preserves curated data_dirs.
+
 **Why N hosts, not exactly 3.** A user may have only one OS today. The
 orchestrator builds whatever is `enabled`; with one host it just builds
 that OS, and additional hosts are enabled later with no code change. macOS
@@ -569,6 +579,9 @@ CI should pre-install Python via `setup-python` action).
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-05-31 — build_all.py v1.1.0: auto-generate build_hosts.toml (current OS
+  enabled as local host) on first run; explicit --init / --init --force mirror
+  build.py, with SSH host details preserved across a --force regenerate.
 - 2026-05-31 — build_all.py v1.0.0: new cross-OS orchestrator. Runs build.py
   on local + SSH hosts (git pull + remote build + artifact copy-back),
   collecting per-OS binaries into dist/<os>-<arch>/. Adds
