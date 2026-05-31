@@ -1,0 +1,56 @@
+# build_hosts.toml — host map for build_all.py (cross-OS orchestrator)
+# =====================================================================
+# Copy this file to your PROJECT ROOT (next to build_config.toml) and edit.
+# Nuitka cannot cross-compile, so each OS binary must be built on a host
+# running that OS. build_all.py runs build.py on each ENABLED host and
+# collects the output into  <project>/dist/<section>-<arch>/.
+#
+# Each [hosts.X] section name (linux / windows / macos) becomes the first
+# half of the output folder label; `arch` becomes the second half.
+
+# Path to build.py. Optional — defaults to the build.py sitting next to
+# build_all.py, which is correct if you run it from the Build_Scripts dir.
+# build_script = "/home/you/dev/Build_Scripts/build.py"
+
+[git]
+# pull = false here, or pass --no-pull, to build the working tree as-is.
+pull = true
+
+
+# ── This machine (Linux). transport = "local" => no SSH, builds right here. ──
+[hosts.linux]
+enabled   = true
+transport = "local"
+arch      = "x86_64"          # -> dist/linux-x86_64/
+# repo    = "/home/you/dev/MyApp"   # optional; defaults to the project_dir
+# python  = "python3.12"            # optional; defaults to the running python
+
+
+# ── Windows build host (a VM or a separate box reachable over SSH). ──────────
+# Enable once you have one. Windows 10+ ships OpenSSH Server (enable it in
+# Settings > Optional Features), so the same SSH transport works.
+[hosts.windows]
+enabled   = false
+transport = "ssh"
+ssh       = "builder@192.168.1.50"          # user@host (or an ~/.ssh/config alias)
+# key     = "~/.ssh/id_ed25519"             # optional private key
+# port    = 22                              # optional
+repo      = "C:/Users/builder/dev/MyApp"    # repo path ON the Windows host
+build_py  = "C:/Dev/Build_Scripts/build.py" # build.py path ON the Windows host
+python    = "py -3.12"                       # interpreter ON the Windows host
+arch      = "amd64"                          # -> dist/windows-amd64/
+
+
+# ── macOS build host. Requires Apple hardware (Mac mini, etc.) — macOS may ───
+# not legally run in a VM on non-Apple machines. If you have no Mac, the
+# practical route for the macOS binary is a GitHub Actions macOS runner
+# (your repos are already on GitHub); see USER_GUIDE.md "macOS without a Mac".
+[hosts.macos]
+enabled   = false
+transport = "ssh"
+ssh       = "builder@192.168.1.60"
+# key     = "~/.ssh/id_ed25519"
+repo      = "/Users/builder/dev/MyApp"
+build_py  = "/Users/builder/dev/Build_Scripts/build.py"
+python    = "python3"
+arch      = "arm64"                          # or x86_64 on Intel Macs

@@ -194,3 +194,53 @@ and `[nuitka] data_dirs`/`data_files`; auto-detection only fills what isn't
 already set. Plain `--init` (no `--force`) still refuses to touch an existing
 file. To intentionally start fresh, delete build_config.toml first, then
 `--init`.
+
+---
+
+## Cross-OS orchestrator (`build_all.py`)
+
+Runs `build.py` on multiple OS hosts and collects per-OS binaries into
+`<project>/dist/<os>-<arch>/`. Nuitka cannot cross-compile; this drives a
+native build on each host instead.
+
+```
+python build_all.py <project_dir> [orchestrator-opts] [-- build.py-flags]
+```
+
+| Flag           | Effect                                                          |
+| -------------- | --------------------------------------------------------------- |
+| `--hosts PATH` | `build_hosts.toml` location (default: `<project>/build_hosts.toml`, then alongside `build_all.py`). |
+| `--only A,B`   | Build only the named host sections (e.g. `--only linux,windows`).|
+| `--no-pull`    | Skip `git pull`; build the working tree as-is.                  |
+| `--dry-run`    | Print the commands that would run; build nothing.               |
+| `-- ...`       | Everything after `--` is forwarded verbatim to `build.py` on every host. |
+
+Host map (`build_hosts.toml`, per-project): each `[hosts.<name>]` is
+`enabled`, `transport = "local"|"ssh"`, and an `arch` that forms the output
+label `<name>-<arch>`. SSH hosts also need `ssh`, `repo`, `build_py`, and
+optionally `python`, `key`, `port`. See
+`examples/build_hosts.template.toml`.
+
+### Recipes
+
+| Goal                                   | Command                                                  |
+| -------------------------------------- | -------------------------------------------------------- |
+| Build every enabled host               | `python build_all.py /path/to/project`                   |
+| Just my current OS                     | `python build_all.py /path/to/project --only linux`      |
+| Clean standalone build on all hosts    | `python build_all.py /path/to/project -- --standalone --clean` |
+| See what would run                     | `python build_all.py /path/to/project --dry-run`         |
+
+### Troubleshooting
+
+**"No build_hosts.toml found"** — copy `examples/build_hosts.template.toml`
+to your project root and enable at least one host.
+
+**SSH host: "Permission denied" / hangs** — confirm key-based SSH works
+manually first: `ssh builder@host echo ok`. On Windows hosts, enable
+OpenSSH Server (Settings → Optional Features) and ensure `git` and your
+`python` are on that host's PATH.
+
+**Artifact not copied back from an SSH host** — `build_all.py` uses `rsync`
+if present, else `scp`. Check the remote build actually produced
+`<repo>/dist/`. Folder (`--standalone`) builds copy the whole `dist/<name>/`
+directory; onefile copies the single file.

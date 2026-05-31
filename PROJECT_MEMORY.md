@@ -5,6 +5,47 @@ that touch the architecture.
 
 ---
 
+## build_all.py — cross-OS orchestrator (v1.0.0)
+
+**Why a separate script, not a flag on build.py.** Nuitka cannot
+cross-compile (it targets only the host OS), so multi-OS output is
+fundamentally an *orchestration* concern — run the one build brain on N
+hosts and gather results — not a *build* concern. Keeping it in
+`build_all.py` leaves `build.py` exactly as-is (single responsibility:
+build this project on this machine) and means the orchestrator can be
+absent on machines that only ever build locally.
+
+**Why SSH as the single remote transport.** Windows 10+, macOS, and Linux
+all ship OpenSSH, so one mechanism reaches every host — no WinRM, no
+per-OS agent. `transport = "local"` covers the current machine with zero
+setup, which is the common single-host starting point.
+
+**Why git pull on the remote before building.** Repos are the source of
+truth on GitHub; each host clones them. Pulling before the build keeps the
+three OS binaries built from the same commit without manual syncing.
+`--no-pull` (or `[git] pull = false`) opts out for dirty-tree debugging.
+
+**Why collect into `dist/<os>-<arch>/`.** `build.py` always writes
+`dist/<name>`; three hosts would overwrite each other in a shared `dist/`.
+Per-OS subfolders keep them separate and make the deliverable set obvious.
+The collector treats every *configured host label* as reserved, so a
+re-run never sweeps one host's output folder into another's — this is what
+makes repeated runs idempotent.
+
+**Why N hosts, not exactly 3.** A user may have only one OS today. The
+orchestrator builds whatever is `enabled`; with one host it just builds
+that OS, and additional hosts are enabled later with no code change. macOS
+is the one OS that cannot be virtualised off Apple hardware — documented
+escape is a GitHub Actions macOS runner (USER_GUIDE §10), since the repos
+are already on GitHub.
+
+**What must not change:** `build.py` stays the only thing that knows how to
+build; `build_all.py` only schedules, transports, and collects. Do not
+duplicate Nuitka/venv/compiler logic into the orchestrator — pass flags
+through after `--` instead.
+
+---
+
 ## v1.8.2 — RAM-aware default jobs (zstd onefile OOM fix)
 
 A My_LLM onefile build on a Threadripper 3990X (64C/128T, 32 GB) failed at
@@ -528,6 +569,11 @@ CI should pre-install Python via `setup-python` action).
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-05-31 — build_all.py v1.0.0: new cross-OS orchestrator. Runs build.py
+  on local + SSH hosts (git pull + remote build + artifact copy-back),
+  collecting per-OS binaries into dist/<os>-<arch>/. Adds
+  examples/build_hosts.template.toml. build.py unchanged; all its flags pass
+  through after `--`. README/HELP/USER_GUIDE/ABOUT updated.
 - 2026-05-31 — v1.8.3: `--init` now PRESERVES an existing build_config.toml's
   [app].entry and [nuitka].data_dirs / data_files when regenerating (incl. with
   --force). Previously --force --init overwrote them with auto-detected values,

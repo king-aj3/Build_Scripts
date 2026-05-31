@@ -417,3 +417,98 @@ python build.py . --audit    # has a [package-data modules] section
 
 In CI mode the script uses the current Python directly (no venv), since the
 runner is already an isolated environment.
+
+---
+
+## 10. Cross-OS builds with `build_all.py`
+
+`build.py` builds for the OS it runs on. To produce Windows **and** Linux
+**and** macOS binaries, `build_all.py` runs `build.py` natively on each
+host and gathers the results into `<project>/dist/<os>-<arch>/`.
+
+### Step 1 — Add a host map
+
+Copy the template into your project root:
+
+```bash
+cp <Build_Scripts>/examples/build_hosts.template.toml /path/to/project/build_hosts.toml
+```
+
+Each `[hosts.<name>]` becomes an output folder `dist/<name>-<arch>/`.
+Enable the OS you can build today; leave the rest `enabled = false` until
+you have a host for them.
+
+```toml
+[hosts.linux]
+enabled = true
+transport = "local"     # builds on this machine — no SSH needed
+arch = "x86_64"
+```
+
+### Step 2 — Build
+
+```bash
+python <Build_Scripts>/build_all.py /path/to/project            # all enabled hosts
+python <Build_Scripts>/build_all.py /path/to/project --only linux
+python <Build_Scripts>/build_all.py /path/to/project -- --standalone --clean
+```
+
+Anything after `--` is passed straight to `build.py` on every host.
+
+### Step 3 — Add remote hosts over SSH (when you have them)
+
+A Windows VM or a second box becomes a build host with `transport = "ssh"`:
+
+```toml
+[hosts.windows]
+enabled   = true
+transport = "ssh"
+ssh       = "builder@192.168.1.50"
+repo      = "C:/Users/builder/dev/MyApp"     # the cloned repo ON that host
+build_py  = "C:/Dev/Build_Scripts/build.py"  # build.py ON that host
+python    = "py -3.12"
+arch      = "amd64"
+```
+
+One-time SSH prep on each remote host:
+
+1. **Key-based login.** `ssh-copy-id builder@host` (or add your public key
+   to the host). Verify: `ssh builder@host echo ok` returns instantly.
+2. **Clone the repo** on that host at the `repo` path (your source of truth
+   is GitHub — `build_all.py` runs `git pull` there before each build).
+3. **Install build.py's prerequisites** on that host (a compatible Python
+   plus the OS toolchain — see this guide's Requirements). Put `git` and the
+   `python` you named on the host's PATH.
+4. **Windows only:** enable OpenSSH Server (Settings → Optional Features →
+   Add a feature → OpenSSH Server), then `Start-Service sshd`.
+
+Then re-run `build_all.py` — the new host builds and its binary lands in
+`dist/windows-amd64/`.
+
+### macOS without a Mac
+
+Apple's license only permits macOS in a VM on Apple hardware, so there is no
+clean way to make a macOS binary on a Linux or Windows box. Two realistic
+options:
+
+- **A Mac** (even a low-end Mac mini) as an SSH host — same `[hosts.macos]`
+  pattern as above.
+- **A GitHub Actions macOS runner** — your repos are already on GitHub, so
+  this needs no local hardware. Keep everything else local and let CI build
+  *only* macOS:
+
+```yaml
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - run: python <Build_Scripts>/build.py . --ci --onefile
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-arm64, path: dist/* }
+```
+
+Download the artifact and drop it into `dist/macos-arm64/` to complete the
+three-OS set.

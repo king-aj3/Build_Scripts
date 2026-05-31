@@ -1,9 +1,31 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.2
-**Date:** 2026-05-30
+**Script version:** 1.8.3  (build.py)
+**Orchestrator:** build_all.py v1.0.0
+**Date:** 2026-05-31
 **License:** Internal use
+
+## What's new — build_all.py v1.0.0 (cross-OS orchestrator)
+
+**New companion script `build_all.py` for Windows + Linux + macOS
+builds.** Nuitka cannot cross-compile — it only emits a binary for the OS
+it runs on — so a three-OS deliverable means running the *same* `build.py`
+natively on three hosts. `build_all.py` drives that from one command:
+
+- Reads a per-project `build_hosts.toml` mapping each OS to a build host.
+- `transport = "local"` builds on the current machine; `transport = "ssh"`
+  runs `git pull` + the remote `build.py` over SSH and copies the artifact
+  back (rsync, or scp fallback).
+- Collects every host's output into `<project>/dist/<os>-<arch>/` so the
+  three binaries never collide.
+- All `build.py` flags pass through unchanged after `--`; `--only`,
+  `--no-pull`, and `--dry-run` control the orchestration itself.
+
+`build.py` is untouched. New files: `build_all.py`,
+`examples/build_hosts.template.toml`. Docs (README/HELP/USER_GUIDE)
+updated; `USER_GUIDE.md` §10 covers SSH host setup and the
+"macOS without a Mac" GitHub Actions route.
 
 ## What's new in 1.8.2
 

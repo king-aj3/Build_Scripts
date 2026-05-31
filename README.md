@@ -95,6 +95,7 @@ For existing projects, you can also copy one of the pre-made configs in
 - `examples/build_config.TLZN.toml` — for TLZN_Calculator
 - `examples/build_config.Thrift.toml` — for Thrift Reseller Tracker
 - `examples/build_config.template.toml` — blank template, all options documented
+- `examples/build_hosts.template.toml` — host map for cross-OS `build_all.py`
 
 ### 2. Set up the PyCharm External Tool (one-time, per IDE)
 
@@ -110,6 +111,37 @@ python <Build_Scripts>/build.py "/path/to/project"
 python <Build_Scripts>/build.py "/path/to/project" --clean --standalone
 python <Build_Scripts>/build.py "/path/to/project" --audit
 ```
+
+---
+
+## Cross-OS builds (Windows + Linux + macOS)
+
+Nuitka **cannot cross-compile** — it only produces a binary for the OS it
+runs on. To ship all three, the *same* `build.py` runs natively on a
+Windows, a Linux, and a macOS host. `build_all.py` drives that:
+
+```bash
+python <Build_Scripts>/build_all.py "/path/to/project"
+python <Build_Scripts>/build_all.py "/path/to/project" --only linux
+python <Build_Scripts>/build_all.py "/path/to/project" -- --standalone --clean
+```
+
+It reads `build_hosts.toml` from the project root and, for every **enabled**
+host, either builds locally (`transport = "local"`) or over SSH
+(`transport = "ssh"` — `git pull`, remote `build.py`, copy artifact back).
+Outputs are collected per-OS so they never collide:
+
+```
+<project>/dist/linux-x86_64/
+<project>/dist/windows-amd64/
+<project>/dist/macos-arm64/
+```
+
+`build.py` is unchanged — every one of its flags passes straight through
+after `--`. Start from `examples/build_hosts.template.toml`. With a single
+machine, enable just your own OS now and flip the others on as you add a
+VM / SSH host. **macOS needs Apple hardware** (or a GitHub Actions macOS
+runner) — see `USER_GUIDE.md` → "macOS without a Mac".
 
 ---
 
