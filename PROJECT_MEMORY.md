@@ -527,7 +527,16 @@ CI should pre-install Python via `setup-python` action).
 
 ---
 
-## include_qt_plugins default — why "sensible", not "all" (v1.8.4)
+## include_qt_plugins: "all" broke Linux; "sensible[,printsupport]" is cross-OS (v1.8.4/1.8.6)
+
+The shared build_config.toml is used by ALL OS hosts (one file, git-synced),
+so include_qt_plugins must be correct for every OS at once — "all" is not, it
+breaks Linux. The only Windows-runtime concern when leaving "all" is losing
+the Qt print plugin, so v1.8.6 auto-appends "printsupport" when QtPrintSupport
+is imported. Net: "sensible" (or "sensible,printsupport") keeps Windows
+behavior intact AND lets Linux compile. Original detail below.
+
+
 
 `--init` used to hardcode `include_qt_plugins = "all"`. That passed
 `--include-qt-plugins=all` to Nuitka, which bundles the entire Qt plugin set
@@ -548,6 +557,19 @@ to the curated-value preserve set alongside entry/data_dirs/data_files).
 build_all.py is unaffected — it never runs `--init`, so it never rewrites
 build_config.toml; committing the corrected value propagates to all OS hosts
 via git pull.
+
+## --force preserves, --reset regenerates (v1.8.5)
+
+`--init --force` deliberately *merges*: it keeps curated keys (entry,
+data_dirs, data_files, include_qt_plugins) from the existing file so a regen
+doesn't destroy hand-tuning. The cost is that a wrong pre-existing value (the
+classic: include_qt_plugins="all" from a pre-1.8.4 init) also survives a
+--force — --force can't distinguish "user chose this" from "stale default".
+`--reset` is the escape hatch: it ignores the existing file completely and
+rebuilds from detection + current defaults, so stale values are cleared. It
+necessarily drops hand-added data_files/data_dirs and resets entry to the
+autodetected value, so it warns. Keep BOTH: --force for safe refresh, --reset
+for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
 
 ## What to NOT change without thinking
 
@@ -601,6 +623,15 @@ via git pull.
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-05-31 — v1.8.6 (build.py): --init/--reset auto-detect QtPrintSupport and
+  emit include_qt_plugins="sensible,printsupport" (else "sensible"), so the print
+  plugin "all" used to provide is retained cross-OS — moving off "all" can't
+  regress Windows printing. Thrift example updated.
+- 2026-05-31 — v1.8.5 (build.py): add `--reset` for `--init` — regenerate
+  build_config.toml from scratch, ignoring the existing file (no preservation),
+  with a warning. Complements `--force` (which preserves curated values). Fixes
+  the gap where `--force` kept a stale include_qt_plugins="all". --reset implies
+  overwrite and works with or without --init.
 - 2026-05-31 — v1.8.4 (build.py): `--init` defaults include_qt_plugins to
   "sensible" instead of "all" (fixes Linux `patchelf: wrong ELF type` from the
   qml plugin tree's .cpp.o files; widgets apps never need qml). --force now

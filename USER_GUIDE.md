@@ -94,6 +94,19 @@ python build.py . --init --force
 Skip this step if you'd rather copy `examples/build_config.template.toml`
 and fill it in by hand.
 
+### `--force` vs `--reset`
+
+Both rewrite `build_config.toml`, but differently:
+
+- `--init --force` **merges**: it regenerates from detection but keeps
+  curated values you set — `entry`, `data_dirs`, `data_files`,
+  `include_qt_plugins`. Use this to refresh without losing hand edits.
+- `--init --reset` **starts over**: it ignores the existing file entirely
+  and regenerates from detection + current defaults (so a stale
+  `include_qt_plugins = "all"` becomes `"sensible"` again). It will
+  drop hand-added `data_files`/`data_dirs` and reset `entry` to the
+  autodetected one, so re-add those afterward if needed.
+
 ### Step 2 — Review the generated config
 
 Open `build_config.toml` and:

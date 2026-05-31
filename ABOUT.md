@@ -1,10 +1,30 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.4  (build.py)
+**Script version:** 1.8.6  (build.py)
 **Orchestrator:** build_all.py v1.1.0
 **Date:** 2026-05-31
 **License:** Internal use
+
+## What's new in 1.8.6 (build.py)
+
+**`--init`/`--reset` auto-detect `QtPrintSupport`.** When the project imports
+`QtPrintSupport`, the generated `include_qt_plugins` becomes
+`"sensible,printsupport"` (otherwise `"sensible"`). This guarantees the Qt
+print plugin — which `"all"` used to bundle — stays in the build on **every**
+OS, so switching off `"all"` cannot regress printing on Windows. Reported in
+the `--init` summary as `Qt plugin set`.
+
+## What's new in 1.8.5 (build.py)
+
+**New `--reset` flag for `--init`.** `--force` intentionally *preserves*
+curated values (entry, data_dirs, data_files, and now include_qt_plugins) so
+a regen doesn't wipe hand edits — but that also means a stale value like
+`include_qt_plugins = "all"` survives a `--force`. `--reset` is the
+from-scratch counterpart: it ignores the existing config entirely and
+regenerates from detection + current defaults, printing a warning that
+curated values are not preserved. `--reset` implies overwrite and works with
+or without an explicit `--init`.
 
 ## What's new in 1.8.4 (build.py)
 

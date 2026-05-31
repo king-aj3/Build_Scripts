@@ -33,7 +33,10 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | --------------------- | ------------------------------------------------------------ |
 | `--init`              | Generate `build_config.toml` from project introspection.     |
 | `--target=pyproject`  | (with `--init`) Append to `pyproject.toml` instead.          |
-| `--force`             | (with `--init`) Overwrite existing config.                   |
+| `--force`             | (with `--init`) Overwrite, **preserving** curated values (entry, data_dirs, data_files, include_qt_plugins). |
+| `--reset`             | (with `--init`) Regenerate config **from scratch**, ignoring the existing file. No preservation. |
+
+> `--init`/`--reset` set `include_qt_plugins` to `"sensible"`, or `"sensible,printsupport"` if the project imports `QtPrintSupport`. Never `"all"` (its qml plugins break the Linux build). A real QML app sets `"sensible,qml"`/`"all"` by hand; `--force` preserves that, `--reset` resets it.
 | `--clean`             | Remove `build/` and `dist/` before building.                 |
 | `--clean-env`         | Also remove `build_env/` (use with `--clean` for full reset).|
 | `--setup-only`        | Create the venv and install deps. Skip compilation.          |
@@ -55,6 +58,8 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | Goal                              | Command                                                       |
 | --------------------------------- | ------------------------------------------------------------- |
 | Onboard a new project             | `python build.py . --init`                                    |
+| Refresh config, keep my edits     | `python build.py . --init --force`                            |
+| Rebuild config from scratch       | `python build.py . --init --reset`                            |
 | Onboard into existing pyproject   | `python build.py . --init --target=pyproject`                 |
 | Quick rebuild                     | `python build.py .`                                           |
 | Full clean rebuild                | `python build.py . --clean --clean-env`                       |

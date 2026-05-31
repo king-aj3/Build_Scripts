@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.4"
+SCRIPT_VERSION    = "1.8.6"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1439,12 +1439,17 @@ def _toml_array(items: list) -> str:
 
 
 def init_config(project_dir: Path, force: bool = False,
-                target: str = "build_config") -> bool:
+                target: str = "build_config", reset: bool = False) -> bool:
     """
     Generate a starter config from project introspection.
 
     target = "build_config" -> writes <project>/build_config.toml
     target = "pyproject"    -> appends [tool.nuitka_builder.*] to pyproject.toml
+
+    reset = True            -> ignore any existing config entirely and
+                               regenerate from detection/defaults (no
+                               preservation of entry/data_dirs/data_files/
+                               include_qt_plugins). Implies overwrite.
     """
     banner(f"Generating config for {project_dir.name}")
 
@@ -1468,11 +1473,16 @@ def init_config(project_dir: Path, force: bool = False,
     # So `--force --init` REFRESHES detection without discarding hand-added
     # entries (custom data_dirs like config/ or console/web, an explicit entry,
     # or [src,dst] data_files). Auto-detection only fills what isn't already set.
+    # `--reset` skips this entirely: nothing is read from the old file, so the
+    # config is rebuilt purely from detection + current defaults.
     _existing = {}
-    if target == "build_config":
+    if target == "build_config" and not reset:
         _bc_path = project_dir / CONFIG_FILENAME
         if _bc_path.is_file():
             _existing = _read_toml(_bc_path)
+    if reset:
+        warn("--reset: ignoring existing config; entry, data_dirs, data_files "
+             "and include_qt_plugins are regenerated from detection/defaults.")
     _ex_app = _existing.get("app", {})    if isinstance(_existing, dict) else {}
     _ex_nk  = _existing.get("nuitka", {}) if isinstance(_existing, dict) else {}
     if _ex_app.get("entry"):
@@ -1493,6 +1503,24 @@ def init_config(project_dir: Path, force: bool = False,
             elif "tkinter" in txt: plugins.append("tk-inter")
         except Exception:
             pass
+
+    # QtPrintSupport detection -> bundle the Qt "printsupport" plugin family so
+    # physical/PDF printing keeps working on every OS (Windows included). This
+    # is what "all" used to provide; "sensible" alone may omit it.
+    qt_default = "sensible"
+    if any(p in plugins for p in ("pyside6", "pyqt6", "pyqt5")):
+        _skip = {"build", "dist", ".venv", "venv", "build_env",
+                 "__pycache__", ".git"}
+        for _py in project_dir.rglob("*.py"):
+            if _skip & set(_py.parts):
+                continue
+            try:
+                if "QtPrintSupport" in _py.read_text(encoding="utf-8",
+                                                     errors="ignore"):
+                    qt_default = "sensible,printsupport"
+                    break
+            except Exception:
+                pass
 
     # Asset directory detection
     asset_names = ("assets", "resources", "data", "themes", "static", "icons")
@@ -1515,6 +1543,8 @@ def init_config(project_dir: Path, force: bool = False,
     say(f"  Detected version     : {version}")
     say(f"  Detected entry       : {entry}")
     say(f"  Detected plugins     : {plugins or '(none)'}")
+    if any(p in plugins for p in ("pyside6", "pyqt6", "pyqt5")):
+        say(f"  Qt plugin set        : {qt_default}")
     say(f"  Detected asset dirs  : {detected_dirs or '(none)'}")
     say(f"  Detected doc files   : {detected_files or '(none)'}")
     say(f"  Detected icon (Win)  : {icon_win or '(none)'}")
@@ -1543,12 +1573,13 @@ def init_config(project_dir: Path, force: bool = False,
     if plugins:
         L.append(f"plugins            = {_toml_array(plugins)}")
         if "pyside6" in plugins or "pyqt6" in plugins or "pyqt5" in plugins:
-            # Default to Nuitka's "sensible" plugin set, NOT "all". "all" drags
-            # in the Qt qml plugin tree, which ships stray .cpp.o object files;
-            # Nuitka's Linux rpath step then runs patchelf on them and aborts
-            # ("patchelf: wrong ELF type"). Widgets apps never need qml. A real
-            # QML app can set "sensible,qml" (or "all") by hand; --force keeps it.
-            L.append(f'include_qt_plugins = "{_preserved_qt or "sensible"}"')
+            # Default to Nuitka's "sensible" set (NOT "all"). "all" drags in the
+            # Qt qml plugin tree, which ships stray .cpp.o object files; Nuitka's
+            # Linux rpath step then runs patchelf on them and aborts ("wrong ELF
+            # type"). qt_default adds "printsupport" when QtPrintSupport is used,
+            # so printing still works on every OS. A real QML app can set
+            # "sensible,qml" or "all" by hand; --force keeps it (--reset rebuilds).
+            L.append(f'include_qt_plugins = "{_preserved_qt or qt_default}"')
     else:
         L.append('# plugins = ["pyside6"]   # uncomment if using Qt')
     L.append("")
@@ -1639,9 +1670,10 @@ def init_config(project_dir: Path, force: bool = False,
         info(f"Appended [tool.nuitka_builder.*] to: {pp_path}")
     else:
         target_path = project_dir / CONFIG_FILENAME
-        if target_path.exists() and not force:
+        if target_path.exists() and not (force or reset):
             error(f"{CONFIG_FILENAME} already exists at {target_path}.")
-            say("  Use --force to overwrite, or edit the existing file manually.")
+            say("  Use --force to overwrite (curated values preserved), or")
+            say("  --reset to regenerate from scratch, or edit the file manually.")
             return False
         header = (f"# build_config.toml - {name}\n"
                   f"# Generated by build.py v{SCRIPT_VERSION} --init "
@@ -1946,7 +1978,13 @@ def main():
                         default="build_config",
                         help="Where --init writes (default: build_config.toml)")
     parser.add_argument("--force",      action="store_true",
-                        help="Overwrite existing config (use with --init)")
+                        help="Overwrite existing config (use with --init). "
+                             "Curated values (entry, data_dirs, data_files, "
+                             "include_qt_plugins) are preserved.")
+    parser.add_argument("--reset",      action="store_true",
+                        help="With --init: regenerate config FROM SCRATCH, "
+                             "ignoring the existing file entirely (no "
+                             "preservation). Implies overwrite.")
     parser.add_argument("--yes", "-y",   action="store_true",
                         help="Auto-accept install prompts (e.g., MSVC Build Tools)")
     parser.add_argument("--ci",         action="store_true", help="Use current Python, no venv")
@@ -1971,8 +2009,9 @@ def main():
     say(f"  Project dir: {project_dir}")
 
     # --init runs before load_config so it can create the config from scratch.
-    if args.init:
-        ok = init_config(project_dir, force=args.force, target=args.target)
+    if args.init or args.reset:
+        ok = init_config(project_dir, force=args.force, target=args.target,
+                         reset=args.reset)
         sys.exit(0 if ok else 1)
 
     cfg = load_config(project_dir)
