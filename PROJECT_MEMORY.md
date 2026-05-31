@@ -527,6 +527,28 @@ CI should pre-install Python via `setup-python` action).
 
 ---
 
+## include_qt_plugins default — why "sensible", not "all" (v1.8.4)
+
+`--init` used to hardcode `include_qt_plugins = "all"`. That passed
+`--include-qt-plugins=all` to Nuitka, which bundles the entire Qt plugin set
+including the `qml/` tree. Some qml plugins (e.g. `Qt/labs/assetdownloader`)
+ship pre-built `.cpp.o` object files. Nuitka's **Linux** standalone step runs
+`patchelf --force-rpath --set-rpath` on every ELF file in the dist tree; an
+ET_REL object file rejects rpath edits, so the build dies at the very end
+with `patchelf: wrong ELF type` — after a full compile+link, the most
+expensive place to fail. Windows has no patchelf/rpath step, so the identical
+config built there fine. This bit every PySide6 project `--init` onboarded,
+on Linux only.
+
+Fix: default to `"sensible"` (Nuitka's recommended set: platforms,
+imageformats, iconengines, styles, platformthemes, …) which excludes qml.
+Widgets/printing apps need nothing from qml. A genuine QML app sets
+`"sensible,qml"` or `"all"` by hand, and `--force --init` preserves it (added
+to the curated-value preserve set alongside entry/data_dirs/data_files).
+build_all.py is unaffected — it never runs `--init`, so it never rewrites
+build_config.toml; committing the corrected value propagates to all OS hosts
+via git pull.
+
 ## What to NOT change without thinking
 
 1. **`nofollow_imports` is exclusion, not "skip compilation".** A
@@ -579,6 +601,11 @@ CI should pre-install Python via `setup-python` action).
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-05-31 — v1.8.4 (build.py): `--init` defaults include_qt_plugins to
+  "sensible" instead of "all" (fixes Linux `patchelf: wrong ELF type` from the
+  qml plugin tree's .cpp.o files; widgets apps never need qml). --force now
+  preserves an existing include_qt_plugins value. Example configs + template +
+  USER_GUIDE schema default updated.
 - 2026-05-31 — build_all.py v1.1.0: auto-generate build_hosts.toml (current OS
   enabled as local host) on first run; explicit --init / --init --force mirror
   build.py, with SSH host details preserved across a --force regenerate.

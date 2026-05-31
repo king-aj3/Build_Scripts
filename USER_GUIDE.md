@@ -175,7 +175,7 @@ Linux).
 | Key                    | Nuitka equivalent                       | Example                                |
 | ---------------------- | --------------------------------------- | -------------------------------------- |
 | `plugins`              | `--enable-plugin=X` (per entry)         | `["pyside6"]`                          |
-| `include_qt_plugins`   | `--include-qt-plugins=X`                | `"all"`                                |
+| `include_qt_plugins`   | `--include-qt-plugins=X`                | `"sensible"`                           |
 | `include_packages`     | `--include-package=X` (per entry)       | `["reportlab", "openpyxl"]`            |
 | `include_package_data` | `--include-package-data=X` (per entry)  | `["tiktoken", "fitz"]`                 |
 | `include_modules`      | `--include-module=X` (per entry)        | `["ui.dynamic_loader"]`                |

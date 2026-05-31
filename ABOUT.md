@@ -1,10 +1,24 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.3  (build.py)
+**Script version:** 1.8.4  (build.py)
 **Orchestrator:** build_all.py v1.1.0
 **Date:** 2026-05-31
 **License:** Internal use
+
+## What's new in 1.8.4 (build.py)
+
+**`--init` now defaults `include_qt_plugins` to `"sensible"`, not `"all"`.**
+`"all"` bundles the Qt **qml** plugin tree, which ships stray `.cpp.o`
+object files. On Linux, Nuitka's rpath step runs `patchelf --set-rpath` over
+every ELF in the bundle and aborts on those objects
+(`patchelf: wrong ELF type`) — so a config generated on/for Windows built
+fine there but failed on Linux. Widgets apps never use qml, so `"sensible"`
+(Nuitka's recommended default set) both fixes the Linux build and shrinks
+the binary on every OS. A real QML app can set `"sensible,qml"` or `"all"`
+by hand; `--force --init` now **preserves** an existing
+`include_qt_plugins` value (joining `entry`, `data_dirs`, `data_files` in
+the curated-value set). Example configs and the template updated to match.
 
 ## What's new — build_all.py v1.1.0
 

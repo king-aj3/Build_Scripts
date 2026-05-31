@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.3"
+SCRIPT_VERSION    = "1.8.4"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1479,6 +1479,7 @@ def init_config(project_dir: Path, force: bool = False,
         entry = _ex_app["entry"]
     _preserved_dirs  = _ex_nk.get("data_dirs")  or None
     _preserved_files = _ex_nk.get("data_files") or None
+    _preserved_qt    = _ex_nk.get("include_qt_plugins") or None
 
     # GUI plugin detection from requirements.txt
     plugins = []
@@ -1542,7 +1543,12 @@ def init_config(project_dir: Path, force: bool = False,
     if plugins:
         L.append(f"plugins            = {_toml_array(plugins)}")
         if "pyside6" in plugins or "pyqt6" in plugins or "pyqt5" in plugins:
-            L.append('include_qt_plugins = "all"')
+            # Default to Nuitka's "sensible" plugin set, NOT "all". "all" drags
+            # in the Qt qml plugin tree, which ships stray .cpp.o object files;
+            # Nuitka's Linux rpath step then runs patchelf on them and aborts
+            # ("patchelf: wrong ELF type"). Widgets apps never need qml. A real
+            # QML app can set "sensible,qml" (or "all") by hand; --force keeps it.
+            L.append(f'include_qt_plugins = "{_preserved_qt or "sensible"}"')
     else:
         L.append('# plugins = ["pyside6"]   # uncomment if using Qt')
     L.append("")
