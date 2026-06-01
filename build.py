@@ -74,6 +74,13 @@ MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
 NUITKA_EXPERIMENTAL = {(3, 14)}   # update when Nuitka stabilises a version
 
+# MinGW64 fallback note: Nuitka 4.x BLOCKS --mingw64 on Python 3.13+. Whenever the
+# mingw64 compiler is specified or selected, the valid and safe fallback
+# interpreter is Python 3.12 (the newest Python MinGW64 still supports). The
+# script enforces this via prefer_below=(3,13) in setup_build_env / get_best_python
+# and will auto-install 3.12 when only a newer Python is present.
+MINGW64_SAFE_PYTHON = (3, 12)
+
 CONFIG_FILENAME   = "build_config.toml"
 REQUIREMENTS_NAME = "requirements.txt"
 
