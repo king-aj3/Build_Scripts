@@ -1,12 +1,26 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.6  (build.py)
+**Script version:** 1.8.7  (build.py)
 **Orchestrator:** build_all.py v1.1.0
-**Date:** 2026-05-31
+**Date:** 2026-06-04
 **License:** Internal use
 
-## What's new in 1.8.6 (build.py)
+## What's new in 1.8.7 (build.py)
+
+**Dropped the explicit `printsupport` Qt plugin family (reverses 1.8.6).** Qt
+6.11 removed the standalone `printsupport` plugin family (folded into the
+platform plugin), so naming it explicitly — as 1.8.6 did when a project imports
+`QtPrintSupport` — is now a hard `FATAL: there is no Qt plugin family
+'printsupport'`. Nuitka's `"sensible"` set already includes `printsupport`
+*gated on `hasPluginFamily()`*, so it auto-bundles the print plugin wherever Qt
+still ships it and skips it on 6.11+ — printing keeps working on every OS
+without naming it. `--init`/`--reset` now emit plain `"sensible"`, `--force`
+self-heals a stale value preserved from an old config, and **every build strips
+a leftover `,printsupport`** — so all existing projects build again with no
+per-project edit.
+
+## What's new in 1.8.6 (build.py) — superseded by 1.8.7
 
 **`--init`/`--reset` auto-detect `QtPrintSupport`.** When the project imports
 `QtPrintSupport`, the generated `include_qt_plugins` becomes

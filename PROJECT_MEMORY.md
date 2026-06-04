@@ -527,14 +527,19 @@ CI should pre-install Python via `setup-python` action).
 
 ---
 
-## include_qt_plugins: "all" broke Linux; "sensible[,printsupport]" is cross-OS (v1.8.4/1.8.6)
+## include_qt_plugins: "all" broke Linux; plain "sensible" is the cross-OS answer (v1.8.4/1.8.6/1.8.7)
 
 The shared build_config.toml is used by ALL OS hosts (one file, git-synced),
 so include_qt_plugins must be correct for every OS at once — "all" is not, it
-breaks Linux. The only Windows-runtime concern when leaving "all" is losing
-the Qt print plugin, so v1.8.6 auto-appends "printsupport" when QtPrintSupport
-is imported. Net: "sensible" (or "sensible,printsupport") keeps Windows
-behavior intact AND lets Linux compile. Original detail below.
+breaks Linux. v1.8.6 auto-appended "printsupport" when QtPrintSupport was
+imported, to keep the print plugin "all" used to provide. v1.8.7 REVERSED that:
+Qt 6.11 removed the standalone "printsupport" plugin family, so an explicit name
+is a FATAL there ("no Qt plugin family 'printsupport'") — and Nuitka's "sensible"
+already includes printsupport gated on hasPluginFamily() (PySidePyQtPlugin.py
+_getSensiblePlugins), so it is bundled wherever Qt ships it and skipped on 6.11+.
+Net: plain "sensible" is correct on every OS and Qt version; a stale ",printsupport"
+from old configs is stripped at build time and self-healed on --force/--reset.
+Original detail below.
 
 
 
@@ -623,6 +628,11 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-06-04 — v1.8.7 (build.py): drop explicit "printsupport" Qt plugin family
+  (reverses 1.8.6). Qt 6.11 removed the standalone family, making an explicit
+  name a FATAL; "sensible" already bundles it gated on hasPluginFamily(). --init/
+  --reset now emit plain "sensible", --force self-heals an old preserved value,
+  and every build strips a stale ",printsupport" so all projects build unedited.
 - 2026-05-31 — v1.8.6 (build.py): --init/--reset auto-detect QtPrintSupport and
   emit include_qt_plugins="sensible,printsupport" (else "sensible"), so the print
   plugin "all" used to provide is retained cross-OS — moving off "all" can't

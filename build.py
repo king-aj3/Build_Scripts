@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.6"
+SCRIPT_VERSION    = "1.8.7"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1102,7 +1102,23 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
     for plugin in cfg.plugins:
         cmd.append(f"--enable-plugin={plugin}")
     if cfg.include_qt_plugins:
-        cmd.append(f"--include-qt-plugins={cfg.include_qt_plugins}")
+        # Normalize the Qt plugin set before handing it to Nuitka (v1.8.7).
+        # Qt 6.11 removed the standalone "printsupport" plugin family (folded
+        # into the platform plugin). Nuitka's "sensible" set already pulls in
+        # printsupport wherever it still exists - it is gated on hasPluginFamily
+        # - so naming it explicitly is redundant on every Qt version AND a hard
+        # FATAL on 6.11+ ("no Qt plugin family 'printsupport'"). Strip it here so
+        # older configs still carrying "sensible,printsupport" keep building with
+        # no per-project edit and no printing regression.
+        _families = [p.strip() for p in cfg.include_qt_plugins.split(",")
+                     if p.strip()]
+        if "printsupport" in _families:
+            _families = [f for f in _families if f != "printsupport"]
+            warn("Dropping redundant Qt plugin family 'printsupport' from "
+                 "include_qt_plugins ('sensible' already bundles it; an "
+                 "explicit name FATALs on Qt 6.11+).")
+        if _families:
+            cmd.append(f"--include-qt-plugins={','.join(_families)}")
 
     # ── Packages / modules / data ────────────────────────────────────────
     for pkg in cfg.include_packages:
@@ -1497,6 +1513,13 @@ def init_config(project_dir: Path, force: bool = False,
     _preserved_dirs  = _ex_nk.get("data_dirs")  or None
     _preserved_files = _ex_nk.get("data_files") or None
     _preserved_qt    = _ex_nk.get("include_qt_plugins") or None
+    # Self-heal a pre-1.8.7 preserved value: drop the stale "printsupport" token
+    # so even --force (which preserves curated values) rewrites the file clean.
+    # Qt 6.11 removed that family; build-time normalization strips it regardless.
+    if _preserved_qt and "printsupport" in _preserved_qt:
+        _kept = [p.strip() for p in _preserved_qt.split(",")
+                 if p.strip() and p.strip() != "printsupport"]
+        _preserved_qt = ",".join(_kept) or None
 
     # GUI plugin detection from requirements.txt
     plugins = []
@@ -1511,23 +1534,14 @@ def init_config(project_dir: Path, force: bool = False,
         except Exception:
             pass
 
-    # QtPrintSupport detection -> bundle the Qt "printsupport" plugin family so
-    # physical/PDF printing keeps working on every OS (Windows included). This
-    # is what "all" used to provide; "sensible" alone may omit it.
+    # Qt plugin set: always Nuitka's "sensible" group (v1.8.7). It already
+    # bundles the "printsupport" family wherever Qt still ships it (gated on
+    # hasPluginFamily), so QtPrintSupport printing keeps working without naming
+    # it. Do NOT append ",printsupport": Qt 6.11 removed that standalone family,
+    # and an explicit-but-absent family is a FATAL ("no Qt plugin family
+    # 'printsupport'"). "all" is likewise avoided - it drags in the QML tree that
+    # breaks Linux builds. A real QML app sets "sensible,qml"/"all" by hand.
     qt_default = "sensible"
-    if any(p in plugins for p in ("pyside6", "pyqt6", "pyqt5")):
-        _skip = {"build", "dist", ".venv", "venv", "build_env",
-                 "__pycache__", ".git"}
-        for _py in project_dir.rglob("*.py"):
-            if _skip & set(_py.parts):
-                continue
-            try:
-                if "QtPrintSupport" in _py.read_text(encoding="utf-8",
-                                                     errors="ignore"):
-                    qt_default = "sensible,printsupport"
-                    break
-            except Exception:
-                pass
 
     # Asset directory detection
     asset_names = ("assets", "resources", "data", "themes", "static", "icons")
@@ -1583,9 +1597,10 @@ def init_config(project_dir: Path, force: bool = False,
             # Default to Nuitka's "sensible" set (NOT "all"). "all" drags in the
             # Qt qml plugin tree, which ships stray .cpp.o object files; Nuitka's
             # Linux rpath step then runs patchelf on them and aborts ("wrong ELF
-            # type"). qt_default adds "printsupport" when QtPrintSupport is used,
-            # so printing still works on every OS. A real QML app can set
-            # "sensible,qml" or "all" by hand; --force keeps it (--reset rebuilds).
+            # type"). "sensible" already bundles the printsupport family wherever
+            # Qt ships it, so printing works on every OS without naming it - Qt
+            # 6.11 removed the standalone family and naming it would FATAL. A real
+            # QML app can set "sensible,qml" or "all" by hand; --force keeps it.
             L.append(f'include_qt_plugins = "{_preserved_qt or qt_default}"')
     else:
         L.append('# plugins = ["pyside6"]   # uncomment if using Qt')

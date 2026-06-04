@@ -36,7 +36,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | `--force`             | (with `--init`) Overwrite, **preserving** curated values (entry, data_dirs, data_files, include_qt_plugins). |
 | `--reset`             | (with `--init`) Regenerate config **from scratch**, ignoring the existing file. No preservation. |
 
-> `--init`/`--reset` set `include_qt_plugins` to `"sensible"`, or `"sensible,printsupport"` if the project imports `QtPrintSupport`. Never `"all"` (its qml plugins break the Linux build). A real QML app sets `"sensible,qml"`/`"all"` by hand; `--force` preserves that, `--reset` resets it.
+> `--init`/`--reset` set `include_qt_plugins` to `"sensible"`. That set already bundles the Qt `printsupport` family wherever Qt ships it (so `QtPrintSupport` printing keeps working) — naming it explicitly is redundant and FATALs on Qt 6.11+, which removed the standalone family. Never `"all"` (its qml plugins break the Linux build). A real QML app sets `"sensible,qml"`/`"all"` by hand; `--force` preserves that, `--reset` resets it. At build time a stale `,printsupport` carried over from a pre-1.8.7 config is stripped automatically.
 | `--clean`             | Remove `build/` and `dist/` before building.                 |
 | `--clean-env`         | Also remove `build_env/` (use with `--clean` for full reset).|
 | `--setup-only`        | Create the venv and install deps. Skip compilation.          |
