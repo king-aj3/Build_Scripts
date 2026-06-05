@@ -10,7 +10,7 @@ entry       = "main.py"
 
 [nuitka]
 plugins            = ["pyside6"]
-include_qt_plugins = "all"
+include_qt_plugins = "sensible"
 
 # reportlab uses dynamic imports - declare submodules explicitly.
 include_packages = [

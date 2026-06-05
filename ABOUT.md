@@ -1,10 +1,23 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.7  (build.py)
+**Script version:** 1.8.8  (build.py)
 **Orchestrator:** build_all.py v1.1.0
 **Date:** 2026-06-04
 **License:** Internal use
+
+## What's new in 1.8.8 (build.py)
+
+**`--init`/`--reset` now auto-detect asset directories nested inside Python
+packages** (e.g. `my_llm/console/web`). Nuitka follows a package's `.py` files
+but does not bundle the non-`.py` data living inside it, so a browser/console UI
+shipped under a package was silently left out of the standalone binary — the app
+then returned `{"error": "not found"}` for its own `index.html`. The new
+`_detect_package_data_dirs()` walks only the importable package tree (dirs with
+`__init__.py`) and lists any non-package subdir that holds asset files under
+`data_dirs`. Top-level non-package dirs (`config/`, `docs/`) are intentionally
+left untouched, so nothing that built before changes. `.js` was added to the
+detected asset extensions.
 
 ## What's new in 1.8.7 (build.py)
 

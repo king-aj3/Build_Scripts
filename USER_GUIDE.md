@@ -78,6 +78,10 @@ This introspects the project and writes a `build_config.toml` with:
 - Entry point auto-detected (`main.py`, `app.py`, etc.)
 - GUI plugin detected from `requirements.txt` (PySide6, PyQt6, etc.)
 - `assets/`, `resources/`, `themes/` etc. auto-listed under `data_dirs`
+- Asset dirs nested inside packages (e.g. `my_llm/console/web`) also auto-listed —
+  Nuitka won't bundle non-`.py` data inside a package on its own, so a console/web
+  UI shipped under a package is detected and added (top-level `config/`, `docs/`
+  are left untouched)
 - Top-level docs (`README.md`, `LICENSE.txt`, etc.) listed under `data_files`
 - Icon path detected from common locations (`assets/icon.ico` etc.)
 

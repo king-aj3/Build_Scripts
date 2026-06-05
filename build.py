@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.7"
+SCRIPT_VERSION    = "1.8.8"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1461,6 +1461,38 @@ def _toml_array(items: list) -> str:
     return "[" + ", ".join(f'"{x}"' for x in items) + "]"
 
 
+def _detect_package_data_dirs(project_dir: Path, asset_exts: set) -> list:
+    """Asset dirs nested INSIDE Python packages (e.g. my_llm/console/web).
+
+    Nuitka follows a package's .py files but does NOT bundle non-.py data
+    living inside it, so a browser/console UI shipped under a package is
+    silently dropped from the binary - the standalone app then 404s on its
+    own assets. Walk only the importable package tree (dirs with __init__.py)
+    and return POSIX-relative paths of every non-package subdir holding asset
+    files. Top-level non-package dirs (config/, docs/) are NOT touched.
+    """
+    found: list = []
+
+    def _has_asset(d: Path) -> bool:
+        return any(p.is_file() and p.suffix.lower() in asset_exts
+                   for p in d.rglob("*"))
+
+    def _walk_package(pkg: Path):
+        for child in sorted(pkg.iterdir()):
+            if (not child.is_dir() or child.name.startswith(".")
+                    or child.name == "__pycache__"):
+                continue
+            if (child / "__init__.py").is_file():
+                _walk_package(child)               # deeper sub-package
+            elif _has_asset(child):
+                found.append(child.relative_to(project_dir).as_posix())
+
+    for top in sorted(project_dir.iterdir()):
+        if top.is_dir() and (top / "__init__.py").is_file():
+            _walk_package(top)
+    return found
+
+
 def init_config(project_dir: Path, force: bool = False,
                 target: str = "build_config", reset: bool = False) -> bool:
     """
@@ -1546,13 +1578,18 @@ def init_config(project_dir: Path, force: bool = False,
     # Asset directory detection
     asset_names = ("assets", "resources", "data", "themes", "static", "icons")
     asset_exts  = {".qss", ".svg", ".png", ".jpg", ".ico", ".icns", ".json",
-                   ".yaml", ".yml", ".css", ".html", ".ttf", ".otf"}
+                   ".yaml", ".yml", ".css", ".html", ".js", ".ttf", ".otf"}
     detected_dirs = []
     for n in asset_names:
         d = project_dir / n
         if d.is_dir() and any(f.is_file() and f.suffix.lower() in asset_exts
                               for f in d.rglob("*")):
             detected_dirs.append(n)
+    # Also bundle asset dirs nested inside packages (e.g. my_llm/console/web)
+    # that Nuitka would otherwise leave out of the binary.
+    for rel in _detect_package_data_dirs(project_dir, asset_exts):
+        if rel not in detected_dirs:
+            detected_dirs.append(rel)
 
     # Top-level docs
     doc_names = ("README.md", "README.txt", "LICENSE", "LICENSE.txt",

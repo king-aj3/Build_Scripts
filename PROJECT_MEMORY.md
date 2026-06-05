@@ -628,6 +628,15 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
   somewhere else (useful for CI publishing).
 
 ## Changelog
+- 2026-06-04 — v1.8.8 (build.py): `--init`/`--reset` now auto-detect asset dirs
+  nested INSIDE Python packages (e.g. `my_llm/console/web`) via
+  `_detect_package_data_dirs()`, which walks only the importable package tree
+  (dirs with `__init__.py`) and bundles any non-package subdir holding asset
+  files. Nuitka follows a package's `.py` but never bundles its non-`.py` data,
+  so a browser/console UI shipped under a package was silently dropped and the
+  standalone app 404'd on its own `index.html` (worked on Windows only because
+  that binary predated the regen). Top-level non-package dirs (`config/`,
+  `docs/`) are intentionally left untouched. `.js` added to the asset-ext set.
 - 2026-06-04 — v1.8.7 (build.py): drop explicit "printsupport" Qt plugin family
   (reverses 1.8.6). Qt 6.11 removed the standalone family, making an explicit
   name a FATAL; "sensible" already bundles it gated on hasPluginFamily(). --init/

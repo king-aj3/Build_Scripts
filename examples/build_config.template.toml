@@ -41,7 +41,7 @@ extra_requirements = [
 plugins = ["pyside6"]
 
 # Qt plugin set: "all" | "sensible" | "" (omit for default)
-include_qt_plugins = "all"
+include_qt_plugins = "sensible"
 
 # --include-package=X   entire package tree
 include_packages = [
