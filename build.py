@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.8.8"
+SCRIPT_VERSION    = "1.9.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -427,6 +427,16 @@ def load_config(project_dir: Path) -> Config:
     pp       = _read_toml(pp_path) if pp_path.is_file() else {}
     pp_tool  = pp.get("tool", {}).get("nuitka_builder", {}) if isinstance(pp, dict) else {}
     pp_proj  = pp.get("project", {}) if isinstance(pp, dict) else {}
+
+    # Single-source-of-truth guard: build_config.toml WINS over (shadows)
+    # pyproject [tool.nuitka_builder]. Having BOTH is the #1 cause of "my build
+    # silently dropped files" — warn loudly so a stray --init artifact can't
+    # quietly override the intended pyproject config.
+    if bc and pp_tool:
+        warn("BOTH build_config.toml AND pyproject.toml [tool.nuitka_builder] exist.")
+        warn("  -> build_config.toml WINS and is SHADOWING your pyproject config.")
+        warn("  -> Standardize on ONE: delete build_config.toml (pyproject is the")
+        warn("     recommended single source) or drop the [tool.nuitka_builder] table.")
 
     if not bc and not pp_tool and not pp_proj:
         warn(f"No {CONFIG_FILENAME} or pyproject.toml found - relying on auto-detect.")
@@ -1494,7 +1504,7 @@ def _detect_package_data_dirs(project_dir: Path, asset_exts: set) -> list:
 
 
 def init_config(project_dir: Path, force: bool = False,
-                target: str = "build_config", reset: bool = False) -> bool:
+                target: str = "pyproject", reset: bool = False) -> bool:
     """
     Generate a starter config from project introspection.
 
@@ -1531,10 +1541,15 @@ def init_config(project_dir: Path, force: bool = False,
     # `--reset` skips this entirely: nothing is read from the old file, so the
     # config is rebuilt purely from detection + current defaults.
     _existing = {}
-    if target == "build_config" and not reset:
-        _bc_path = project_dir / CONFIG_FILENAME
-        if _bc_path.is_file():
-            _existing = _read_toml(_bc_path)
+    if not reset:
+        if target == "build_config":
+            _bc_path = project_dir / CONFIG_FILENAME
+            if _bc_path.is_file():
+                _existing = _read_toml(_bc_path)
+        elif target == "pyproject":
+            # Preserve curated values from an existing [tool.nuitka_builder] so
+            # --init --force RE-DETECTS without discarding hand-added data_dirs.
+            _existing = pp_tool if isinstance(pp_tool, dict) else {}
     if reset:
         warn("--reset: ignoring existing config; entry, data_dirs, data_files "
              "and include_qt_plugins are regenerated from detection/defaults.")
@@ -1912,6 +1927,56 @@ def audit(project_dir: Path, cfg: Config) -> bool:
     return issues == 0
 
 
+def preflight_warn(project_dir: Path, cfg: Config) -> None:
+    """Concise pre-build sanity check -- runs automatically before EVERY build.
+
+    Surfaces likely bundling gaps so a code/asset RESTRUCTURE can't silently
+    ship a broken binary, WITHOUT you having to remember to run --init or
+    --audit. Never blocks the build; it only warns. Full detail + copy-paste
+    fixes: `build.py <project> --audit`.
+    """
+    asset_exts = {".qss", ".svg", ".png", ".jpg", ".jpeg", ".ico", ".icns",
+                  ".json", ".yaml", ".yml", ".css", ".html", ".js", ".sql",
+                  ".ttf", ".otf", ".woff", ".woff2", ".webp", ".gif", ".desktop"}
+    declared = set()
+    for e in cfg.data_dirs:
+        p = e if isinstance(e, str) else (e[0] if e else "")
+        if p:
+            declared.add(str((project_dir / p).resolve()))
+
+    problems = []
+    # (a) declared paths that no longer exist (moved/renamed in a restructure)
+    for e in cfg.data_dirs:
+        p = e if isinstance(e, str) else (e[0] if e else "")
+        if p and not (project_dir / p).is_dir():
+            problems.append(f"declared data_dir is gone: {p}")
+    for e in cfg.data_files:
+        if (isinstance(e, (list, tuple)) and len(e) == 2
+                and not (project_dir / e[0]).is_file()):
+            problems.append(f"declared data_file is gone: {e[0]}")
+    # (b) top-level asset dirs not bundled
+    for name in ("assets", "resources", "data", "themes", "icons", "static"):
+        d = project_dir / name
+        if (d.is_dir() and str(d.resolve()) not in declared
+                and any(f.is_file() and f.suffix.lower() in asset_exts
+                        for f in d.rglob("*"))):
+            problems.append(f"asset dir not bundled: {name}/")
+    # (c) package-nested asset dirs not bundled (e.g. my_llm/console/web)
+    for rel in _detect_package_data_dirs(project_dir, asset_exts):
+        if str((project_dir / rel).resolve()) not in declared:
+            problems.append(f"package asset dir not bundled: {rel}")
+
+    if problems:
+        warn("Preflight: possible bundling gaps (did a restructure move things?) --")
+        for p in problems[:8]:
+            say(f"        - {p}")
+        if len(problems) > 8:
+            say(f"        ... and {len(problems) - 8} more")
+        say("        These may be MISSING from the binary. Declare them in pyproject")
+        say("        [tool.nuitka_builder] data_dirs/data_files, or run --audit for")
+        say("        copy-paste fixes. (Warning only -- the build continues.)")
+
+
 def show_info(project_dir: Path, cfg: Config):
     banner("Build script info")
     say(f"  build.py version : {SCRIPT_VERSION}")
@@ -2032,10 +2097,13 @@ def main():
     parser.add_argument("--audit",      action="store_true",
                         help="Validate config vs. project files (read-only, suggestions)")
     parser.add_argument("--init",       action="store_true",
-                        help="Generate build_config.toml from project introspection")
+                        help="Onboard a NEW project: generate pyproject "
+                             "[tool.nuitka_builder]. NOT needed for routine "
+                             "builds (a clean build just reads existing config).")
     parser.add_argument("--target",     choices=["build_config", "pyproject"],
-                        default="build_config",
-                        help="Where --init writes (default: build_config.toml)")
+                        default="pyproject",
+                        help="Where --init writes (default: pyproject.toml "
+                             "[tool.nuitka_builder] -- the recommended single source)")
     parser.add_argument("--force",      action="store_true",
                         help="Overwrite existing config (use with --init). "
                              "Curated values (entry, data_dirs, data_files, "
@@ -2067,8 +2135,29 @@ def main():
         f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro})")
     say(f"  Project dir: {project_dir}")
 
-    # --init runs before load_config so it can create the config from scratch.
+    # --init / --reset run before load_config so they can create config from scratch.
     if args.init or args.reset:
+        # Guard: if a config ALREADY exists, --init is rarely what you want.
+        # Restructuring CODE never needs re-init -- a clean build just reads the
+        # existing config. --init/--reset exist to ONBOARD or deliberately
+        # RE-DETECT. This stops the habit of running --init/--force/--reset for
+        # a "clean build" (which only spawns/overwrites config files).
+        _bc_exists = (project_dir / CONFIG_FILENAME).is_file()
+        _pp = _read_toml(project_dir / "pyproject.toml") \
+            if (project_dir / "pyproject.toml").is_file() else {}
+        _pp_nk = bool(_pp.get("tool", {}).get("nuitka_builder")) \
+            if isinstance(_pp, dict) else False
+        if (_bc_exists or _pp_nk) and not (args.force or args.reset):
+            banner("This project already has a build config")
+            if _pp_nk:     say("  - pyproject.toml [tool.nuitka_builder]   (recommended single source)")
+            if _bc_exists: say("  - build_config.toml")
+            say("")
+            say("  You do NOT need --init to get a clean build after restructuring.")
+            say("  Rebuild this:        python build.py <project> --clean --onefile")
+            say("  Check for gaps:      python build.py <project> --audit")
+            say("  Re-detect anyway:    add --force (preserves curated data_dirs/files)")
+            say("")
+            sys.exit(0)
         ok = init_config(project_dir, force=args.force, target=args.target,
                          reset=args.reset)
         sys.exit(0 if ok else 1)
@@ -2099,6 +2188,7 @@ def main():
             say(f"  Python: {vp}")
         return
 
+    preflight_warn(project_dir, cfg)          # surface restructure/bundling gaps
     ok = run_build(project_dir, cfg,
                    onefile=onefile, compiler=args.compiler,
                    jobs=args.jobs, forced_python=args.python, ci=args.ci,
