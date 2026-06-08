@@ -9,7 +9,7 @@
 ## What's new in 1.8.8 (build.py)
 
 **`--init`/`--reset` now auto-detect asset directories nested inside Python
-packages** (e.g. `my_llm/console/web`). Nuitka follows a package's `.py` files
+packages** (e.g. `ajj3_brain/console/web`). Nuitka follows a package's `.py` files
 but does not bundle the non-`.py` data living inside it, so a browser/console UI
 shipped under a package was silently left out of the standalone binary — the app
 then returned `{"error": "not found"}` for its own `index.html`. The new

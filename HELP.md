@@ -202,7 +202,7 @@ file. To intentionally start fresh, delete build_config.toml first, then
 
 **Standalone app shows `{"error": "not found"}` or ships without its web UI?**
 The app's asset folder lives nested inside a Python package (e.g.
-`my_llm/console/web`) and wasn't bundled. Nuitka follows a package's `.py` but
+`ajj3_brain/console/web`) and wasn't bundled. Nuitka follows a package's `.py` but
 not its non-`.py` data. v1.8.8+ auto-detects these on `--init`/`--reset`; if you
 built with an older build.py, re-run `--init --reset` (or add the dir to
 `data_dirs` manually) and rebuild. Verify with: launch the binary, then

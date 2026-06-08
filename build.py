@@ -1472,7 +1472,7 @@ def _toml_array(items: list) -> str:
 
 
 def _detect_package_data_dirs(project_dir: Path, asset_exts: set) -> list:
-    """Asset dirs nested INSIDE Python packages (e.g. my_llm/console/web).
+    """Asset dirs nested INSIDE Python packages (e.g. ajj3_brain/console/web).
 
     Nuitka follows a package's .py files but does NOT bundle non-.py data
     living inside it, so a browser/console UI shipped under a package is
@@ -1600,7 +1600,7 @@ def init_config(project_dir: Path, force: bool = False,
         if d.is_dir() and any(f.is_file() and f.suffix.lower() in asset_exts
                               for f in d.rglob("*")):
             detected_dirs.append(n)
-    # Also bundle asset dirs nested inside packages (e.g. my_llm/console/web)
+    # Also bundle asset dirs nested inside packages (e.g. ajj3_brain/console/web)
     # that Nuitka would otherwise leave out of the binary.
     for rel in _detect_package_data_dirs(project_dir, asset_exts):
         if rel not in detected_dirs:
@@ -1961,7 +1961,7 @@ def preflight_warn(project_dir: Path, cfg: Config) -> None:
                 and any(f.is_file() and f.suffix.lower() in asset_exts
                         for f in d.rglob("*"))):
             problems.append(f"asset dir not bundled: {name}/")
-    # (c) package-nested asset dirs not bundled (e.g. my_llm/console/web)
+    # (c) package-nested asset dirs not bundled (e.g. ajj3_brain/console/web)
     for rel in _detect_package_data_dirs(project_dir, asset_exts):
         if str((project_dir / rel).resolve()) not in declared:
             problems.append(f"package asset dir not bundled: {rel}")
