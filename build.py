@@ -893,6 +893,33 @@ def _pip(venv_py: Path, *args):
         sys.exit(r.returncode)
 
 
+def _pip_try(venv_py: Path, *args) -> bool:
+    """Non-fatal pip install: returns True on success, False on failure.
+    Used where we want to attempt a self-repair before giving up."""
+    cmd = [str(venv_py), "-m", "pip", "install", "--disable-pip-version-check", *args]
+    return subprocess.run(cmd).returncode == 0
+
+
+def _env_healthy(venv_py: Path) -> bool:
+    """Integrity check for a reusable build_env.
+
+    Detects the 'interrupted pip install' failure mode: the venv Python
+    still runs, but pip's own package body was gutted. (pip deletes its
+    old files before writing the new ones during a self-upgrade; a kill
+    mid-write leaves an importable-looking pip whose _internal package
+    is empty, so every 'python -m pip ...' then dies with
+    ModuleNotFoundError. The same fingerprint appears across any package
+    whose reinstall was interrupted.)  A False here means the env is
+    corrupt and should be recreated rather than reused."""
+    try:
+        r = subprocess.run(
+            [str(venv_py), "-m", "pip", "--version"],
+            capture_output=True, text=True, timeout=30)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
                     force_recreate: bool = False, compiler: str = "") -> Path | None:
     """Create or reuse build_env; install Nuitka and requirements.
@@ -905,6 +932,16 @@ def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
 
     # Compiler-aware Python preference: MinGW64 doesn't work on Python 3.13+
     prefer_below = (3, 13) if (IS_WIN and compiler == "mingw64") else None
+
+    # Integrity gate: an interrupted pip run can leave build_env with a
+    # runnable Python but gutted packages (pip/_internal emptied,
+    # dist-info orphaned). Such an env passes the version check below but
+    # then fails cryptically mid-build. Detect and wipe it up front so we
+    # recreate cleanly instead of half-trusting it.
+    if (venv_dir.exists() and not force_recreate and venv_py.is_file()
+            and not _env_healthy(venv_py)):
+        warn("Build env corrupted (pip not runnable) - recreating from scratch.")
+        shutil.rmtree(venv_dir, ignore_errors=True)
 
     # Reuse?
     if venv_dir.exists() and not force_recreate and venv_py.is_file():
@@ -1001,7 +1038,13 @@ def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
 def _install_packages(project_dir: Path, venv_py: Path, cfg: Config):
     """Install pip + Nuitka + requirements.txt + cfg.extra_requirements."""
     info("Upgrading pip/setuptools/wheel...")
-    _pip(venv_py, "--upgrade", "pip", "setuptools", "wheel")
+    if not _pip_try(venv_py, "--upgrade", "pip", "setuptools", "wheel"):
+        # A prior interrupted upgrade can leave pip itself broken. Restore
+        # it from the bundled wheel via ensurepip, then retry once before
+        # giving up. Turns a hard, cryptic failure into a self-heal.
+        warn("pip upgrade failed - repairing pip via ensurepip and retrying...")
+        subprocess.run([str(venv_py), "-m", "ensurepip", "--upgrade"], check=False)
+        _pip(venv_py, "--upgrade", "pip", "setuptools", "wheel")
 
     # Nuitka core
     r = subprocess.run([str(venv_py), "-m", "nuitka", "--version"],
