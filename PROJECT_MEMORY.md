@@ -627,7 +627,32 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
 - **Output directory override.** `--output-dir` flag could redirect `dist/`
   somewhere else (useful for CI publishing).
 
+## Why the env's Nuitka gets patched for EDR retries (v1.10.0)
+
+CylancePROTECT on the Windows build host holds every freshly linked unsigned
+exe for ~60+ s while it scans. Nuitka's resource-embedding step (icon +
+version info, the LAST build stage) retries only 5 × 1 s
+(`decoratorRetries` in `nuitka/utils/Utils.py`), so onefile builds failed
+with "Failed to add resources … the result is unusable" after an otherwise
+perfect compile — every time, because each relink produces a new file hash
+that gets held again. Re-running the build can never fix it; only a longer
+in-place retry window can (the verified Thrift_Reseller build needed 34
+attempts ≈ 68 s).
+
+Patching the env's installed Nuitka copy (idempotent string replace during
+`_install_packages`, Windows only) was chosen over: an env var (Nuitka has
+none for this), forking/pinning Nuitka (heavy), or hand-patching each
+build_env (wiped by `--clean-env` / upgrades — that was the stopgap on
+2026-06-10). If a future Nuitka changes the `attempts=5, sleep_time=1`
+layout, the script warns ("layout changed") instead of failing, and the
+patch needs a refresh.
+
 ## Changelog
+- 2026-06-10 — v1.10.0 (build.py): env setup now patches the build env's
+  Nuitka (`decoratorRetries` 5×1s → 40×2s) so EDR (CylancePROTECT) can't kill
+  the resource-embedding step; idempotent, re-applies after --clean-env,
+  warns-not-fails on unknown Nuitka layouts. HELP.md troubleshooting entry
+  added; ABOUT.md version refreshed.
 - 2026-06-04 — v1.8.8 (build.py): `--init`/`--reset` now auto-detect asset dirs
   nested INSIDE Python packages (e.g. `my_llm/console/web`) via
   `_detect_package_data_dirs()`, which walks only the importable package tree

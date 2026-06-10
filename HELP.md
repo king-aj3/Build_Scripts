@@ -72,6 +72,19 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 
 ## Troubleshooting
 
+### Build fails with "Failed to add resources to file … the result is unusable"
+The compile and link succeeded; the icon/version-resource embedding step at the
+very end could not write to the freshly linked exe. Nuitka blames Windows
+Defender, but on hosts running an EDR (e.g. **CylancePROTECT**) the real cause
+is the EDR holding every new unsigned exe for ~60+ seconds — far longer than
+Nuitka's stock retry window (5 × 1 s). Since v1.10.0 the script patches the
+build env's Nuitka copy to retry 40 × 2 s during env setup (log line
+"Patched Nuitka AV retry window"), which rides out the scan; a verified build
+needed 34 attempts. If you still hit this, the env may predate v1.10.0 — re-run
+the build (the patch applies on every env setup) — or the Nuitka version
+changed its retry code (the script warns "layout changed" instead of patching);
+then ask IT to exclude the project `build/` folders from the EDR.
+
 ### "FATAL: cannot use '--mingw64' on Python version 3.13 or higher"
 Nuitka 4.x blocks MinGW64 on Python 3.13+. As of v1.3.0 the build script
 prefers Python ≤3.12 when MinGW64 is the chosen compiler, so this rarely

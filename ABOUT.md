@@ -1,10 +1,27 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.8.8  (build.py)
+**Script version:** 1.10.0  (build.py)
 **Orchestrator:** build_all.py v1.1.0
-**Date:** 2026-06-04
+**Date:** 2026-06-10
 **License:** Internal use
+
+## What's new in 1.10.0 (build.py)
+
+**Env setup now patches Nuitka's anti-virus retry window (EDR fix).** On the
+Windows build host, CylancePROTECT holds every freshly linked unsigned exe for
+~60+ seconds, so Nuitka's final resource-embedding step (icon + version info)
+failed every onefile build with "Failed to add resources to file … the result
+is unusable" — after an otherwise perfect compile. Nuitka's stock retry window
+is `decoratorRetries(attempts=5, sleep_time=1)` and has no configuration knob,
+and re-running the build can never help (each relink is a new file hash that
+gets held again). `_install_packages()` now rewrites the env's
+`nuitka/utils/Utils.py` defaults to **40 × 2 s** (idempotent; logs "Patched
+Nuitka AV retry window"; warns instead of failing if a future Nuitka changes
+the code layout). The verified Thrift_Reseller build succeeded after 34
+attempts (~68 s). Because the patch runs on every env setup, `--clean-env`
+rebuilds and Nuitka upgrades re-patch themselves — the earlier hand-applied
+build_env patches are superseded.
 
 ## What's new in 1.8.8 (build.py)
 

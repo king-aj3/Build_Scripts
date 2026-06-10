@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.9.0"
+SCRIPT_VERSION    = "1.10.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -1035,6 +1035,55 @@ def setup_build_env(project_dir: Path, cfg: Config, forced_python=None,
     return venv_py
 
 
+def _patch_nuitka_av_retries(venv_py: Path):
+    """Widen Nuitka's Windows retry window so EDR doesn't kill the build.
+
+    CylancePROTECT (and similar EDR) holds freshly linked exes for ~60+ s,
+    which makes Nuitka's resource-embedding step fail every time with
+    "Failed to add resources to file ... the result is unusable" — its stock
+    retry window (decoratorRetries attempts=5, sleep_time=1) is far too
+    short. A verified Thrift_Reseller build needed 34 attempts. Patch the
+    env's Nuitka copy to 40 x 2 s. Idempotent; runs on every env setup so a
+    --clean-env rebuild or Nuitka upgrade is re-patched automatically.
+    """
+    if os.name != "nt":
+        return
+    r = subprocess.run(
+        [str(venv_py), "-c",
+         "import nuitka.utils.Utils as u; print(u.__file__)"],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        warn("Could not locate nuitka.utils.Utils - AV retry patch skipped.")
+        return
+    utils_py = Path(r.stdout.strip().splitlines()[-1])
+    try:
+        src = utils_py.read_text(encoding="utf-8")
+    except OSError as e:
+        warn(f"AV retry patch skipped ({e})")
+        return
+    if "attempts=40," in src:
+        return  # already patched
+    stock = "    attempts=5,\n    sleep_time=1,"
+    patched = (
+        "    # Patched by build.py: EDR (e.g. CylancePROTECT) holds freshly\n"
+        "    # linked exes longer than the stock 5x1s window - 40x2s rides\n"
+        "    # out the scan so resource embedding stops failing.\n"
+        "    attempts=40,\n"
+        "    sleep_time=2,"
+    )
+    if stock not in src:
+        warn("Nuitka decoratorRetries layout changed - AV retry patch NOT "
+             "applied (builds may fail under EDR; see HELP.md).")
+        return
+    try:
+        utils_py.write_text(src.replace(stock, patched, 1),
+                            encoding="utf-8", newline="")
+    except OSError as e:
+        warn(f"AV retry patch failed to write ({e})")
+        return
+    info("Patched Nuitka AV retry window (5x1s -> 40x2s) for EDR/Cylance.")
+
+
 def _install_packages(project_dir: Path, venv_py: Path, cfg: Config):
     """Install pip + Nuitka + requirements.txt + cfg.extra_requirements."""
     info("Upgrading pip/setuptools/wheel...")
@@ -1076,6 +1125,9 @@ def _install_packages(project_dir: Path, venv_py: Path, cfg: Config):
             subprocess.run([str(venv_py), "-m", "pip", "uninstall", "-y",
                             "PyQt6", "PyQt6-Qt6", "PyQt6-sip"],
                            capture_output=True)
+
+    # EDR on this host holds fresh exes past Nuitka's stock retry window
+    _patch_nuitka_av_retries(venv_py)
     info("Build environment ready.")
 
 
