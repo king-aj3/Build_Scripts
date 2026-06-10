@@ -1180,7 +1180,7 @@ def build_nuitka_command(project_dir: Path, venv_py: Path, cfg: Config,
         # modules are now handled by --nofollow-import-to (the giant TU is
         # never compiled), so LTO is no longer the heavy-module concern it
         # was - but staying conservative on Win+MSVC costs little.
-        lto = "no" if (IS_WIN and compiler == "msvc") else "yes"
+        lto = "no" if ((IS_WIN and compiler == "msvc") or IS_MAC) else "yes"
     cmd.append(f"--lto={lto}")
 
     cmd += [
