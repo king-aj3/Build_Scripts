@@ -614,32 +614,27 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
 
 ## Open items / future work
 
-- **[IN PROGRESS] Three-OS release via `build_all.py`.** Status as of
-  2026-06-12 (pick up here):
-  - **macOS (github transport): WORKING.** ajj3-brain built green on a
-    macos-15-arm64 runner in ~4m10s and the artifact pulled back to
-    `dist/macos-arm64/`. Per-project setup needs: workflow file with the real
-    `king-aj3/Build_Scripts` repo, a verified `BUILD_SCRIPTS_TOKEN` secret,
-    and `ref = "master"` in `[hosts.macos]`.
-  - **Per-project secrets:** ajj3-brain ✓ (after re-set). WealthBuilder had a
-    bad/garbled secret on first try (first checkout OK, second "Bad
-    credentials") — re-set with the verified PAT. Thrift's secret was never
-    set (404 on guessed repo name) — find the real name via
-    `gh repo list king-aj3` and `gh secret set` it.
-  - **Windows host (SSH): NOT YET DONE — finish next.** The generated
-    `[hosts.windows]` stub is `enabled = false` with SSH placeholders. Plan:
-    SSH into the existing Windows guest VM (`transport = "ssh"`) so the build
-    runs natively and keeps MSVC auto-select + pymupdf bytecode + EDR retry
-    patch. A GitHub Actions windows-latest runner was considered and rejected
-    (no MSVC/winget control, can't tune the pymupdf 2.2M-line C ceiling,
-    slower). Full step-by-step is in USER_GUIDE §10 Step 3; the work is just
-    executing it: enable sshd on the VM, key login, clone repo + Build_Scripts
-    on the host, set `enabled = true` + ssh/repo/build_py/python/arch, then
-    `build_all.py <proj> --only windows`.
-  - **Remaining validation:** confirm the macOS binaries actually *run* on a
-    Mac (only build-success is proven so far); build WealthBuilder then Thrift
-    once their secrets are fixed; Thrift is the real test of pymupdf bytecode
-    mode carrying to macOS.
+- **[DONE 2026-06-13] Three-OS release via `build_all.py` — all 3 projects ×
+  3 OSes building green.** macOS via github transport (arm64), Windows via SSH
+  to the guest VM (native MSVC), Linux local + auto tar.gz. Verified builds:
+  - **WealthBuilder:** macOS ✓, Windows .exe 48 MB / MSVC 14.5 / ~19m ✓.
+  - **ajj3-brain:** macOS ✓ (~4m), Windows .exe 16 MB / ~3m ✓.
+  - **Thrift_Reseller:** macOS ✓, Windows .exe 197.7 MB / ~31m ✓ — pymupdf
+    bytecode mode (`--noinclude-custom-mode=pymupdf.mupdf:bytecode`) and the
+    python-barcode DejaVuSansMono.ttf bundling both carried to native Windows
+    MSVC cleanly. This was the key validation.
+  Windows host setup that made it work is captured in the cross-os-build skill
+  (sshd via wuauserv-reenable or winget, blank-password fix, admin
+  authorized_keys + icacls, scp copy-back, GCM-pull caveat).
+  Follow-ups (cosmetic, non-blocking):
+  - Thrift has BOTH `build_config.toml` and `pyproject.toml
+    [tool.nuitka_builder]`; build_config wins and shadows pyproject. Pick one.
+  - ajj3-brain + Thrift fire an icon-only `assets/` preflight warning each
+    build (false positive — dir is build-time icons only; Thrift's
+    user_manual.pdf is correctly bundled). Optionally silence per-project.
+  - Remote `git pull` over ssh fails on GCM (`--no-pull` to skip); VM builds
+    its current working tree. Set up a PAT in the VM's git store if unattended
+    private-repo pulls are wanted.
 - **[ROADMAP] Parallel build-matrix mode (project × OS aware).** Today
   `build_all.py` is sequential across hosts within one project, and there's
   no coordination *across* projects — running two `build_all.py` invocations

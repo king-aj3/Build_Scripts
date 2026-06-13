@@ -164,16 +164,12 @@ runner) — see `USER_GUIDE.md` → "macOS without a Mac".
 
 ## Roadmap
 
-- **[in progress] Three-OS release pipeline.** `build_all.py` drives
-  Windows + Linux + macOS.
-  - macOS via GitHub Actions (`transport = "github"`, arm64) — **working**
-    (ajj3-brain validated, ~4 min/build).
-  - Linux local build + auto `.tar.gz` packaging — **working**.
-  - **Windows SSH host — to finish.** Build natively on the Windows guest VM
-    over SSH (`transport = "ssh"`). One-time host setup steps are in
-    USER_GUIDE §10 Step 3; full first-time walkthrough in USER_GUIDE §11.
-  - Per-project: copy `examples/macos-build.yml`, set the
-    `BUILD_SCRIPTS_TOKEN` secret, enable hosts in `build_hosts.toml`.
+- **[done] Three-OS release pipeline.** `build_all.py` drives Windows + Linux
+  + macOS; all three projects (WealthBuilder, ajj3-brain, Thrift_Reseller)
+  build green on all three OSes.
+  - macOS via GitHub Actions (`transport = "github"`, arm64).
+  - Windows native via SSH to the guest VM (`transport = "ssh"`, MSVC).
+  - Linux local build + auto `.tar.gz` packaging.
 - **Code signing.** Unsigned binaries today; a `[codesign]` TOML section
   (Windows cert thumbprint, macOS developer ID) would close the gap.
 - **Parallel build-matrix mode.** Build N projects across OSes concurrently —
