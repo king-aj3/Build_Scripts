@@ -66,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.0"
+ORCH_VERSION = "1.2.1"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -395,8 +395,24 @@ def build_github(name: str, host: dict, project_dir: Path, label: str,
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     step(f"downloading artifact '{artifact}' -> dist/{label}/")
-    return run(["gh", "run", "download", run_id, "-R", gh_repo,
-                "-n", artifact, "-D", str(target)], dry) == 0
+    dl = ["gh", "run", "download", run_id, "-R", gh_repo,
+          "-n", artifact, "-D", str(target)]
+    for attempt in range(1, 5):
+        if run(dl, dry) == 0:
+            return True
+        if attempt < 4:
+            wait = attempt * 10
+            warn(f"artifact download failed (attempt {attempt}/4) — "
+                 f"the build succeeded, this is a transient blob-store hiccup; "
+                 f"retrying in {wait}s.")
+            import time as _t
+            _t.sleep(wait)
+    warn("artifact download still failing after 4 tries. The build is fine — "
+         "grab it manually with:")
+    say(f"    gh run download {run_id} -R {gh_repo} -n {artifact} "
+        f"-D {target}")
+    say(f"  or from: https://github.com/{gh_repo}/actions/runs/{run_id}")
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

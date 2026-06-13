@@ -2,9 +2,18 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.10.0  (build.py)
-**Orchestrator:** build_all.py v1.2.0
+**Orchestrator:** build_all.py v1.2.1
 **Date:** 2026-06-12
 **License:** Internal use
+
+## What's new in build_all.py 1.2.1
+
+- **Resilient artifact download** — the github transport now retries the
+  artifact download up to 4× (10/20/30s backoff) before giving up. A
+  freshly uploaded artifact can briefly 404 on Azure blob storage; the
+  build itself already succeeded, so a transient download hiccup no longer
+  wastes the whole run. On final failure it prints the manual
+  `gh run download` command and the run URL.
 
 ## What's new in build_all.py 1.2.0
 

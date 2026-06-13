@@ -671,6 +671,11 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-12 — build_all.py v1.2.1: github transport retries the artifact
+  download 4× (10/20/30s backoff) — a just-uploaded artifact can transiently
+  fail to connect to Azure blob storage (`*.blob.core.windows.net`) even
+  though the build succeeded; not a firewall issue. Prints manual download
+  command + run URL on final failure.
 - 2026-06-12 — build_all.py v1.2.0: new `transport = "github"`
   (`build_github()`: gh dispatch → watch → artifact download, keys gh_repo /
   workflow / ref / artifact) and automatic Linux tar.gz packaging
