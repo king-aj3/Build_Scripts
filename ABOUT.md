@@ -3,8 +3,20 @@
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.10.0  (build.py)
 **Orchestrator:** build_all.py v1.2.1
-**Date:** 2026-06-12
+**Date:** 2026-06-13
 **License:** Internal use
+
+## What's new in the docs (2026-06-13)
+
+- USER_GUIDE **§11 — First-time three-OS setup checklist**: a start-to-finish
+  runbook (PAT creation + verification, per-repo secret, workflow file, host
+  config) with a failure quick-reference table covering every issue hit
+  during bring-up (wrong branch, missing slash, bad-credentials-vs-404,
+  transient blob download).
+- USER_GUIDE §10 Step 3: Windows SSH host expanded into a complete
+  step-by-step (enable sshd, key login, prerequisites, repo clone).
+- README **Roadmap** section added; PROJECT_MEMORY "Open items" now tracks
+  three-OS bring-up status (macOS working; Windows SSH host = next).
 
 ## What's new in build_all.py 1.2.1
 

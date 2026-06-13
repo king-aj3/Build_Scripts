@@ -478,7 +478,11 @@ Anything after `--` is passed straight to `build.py` on every host.
 
 ### Step 3 — Add remote hosts over SSH (when you have them)
 
-A Windows VM or a second box becomes a build host with `transport = "ssh"`:
+A Windows VM or a second box becomes a build host with `transport = "ssh"`.
+This is the recommended way to add Windows: it builds natively, so your MSVC
+auto-selection, pymupdf bytecode handling, and EDR retry patch all apply
+unchanged — none of which a GitHub Actions Windows runner would let you
+control.
 
 ```toml
 [hosts.windows]
@@ -491,20 +495,41 @@ python    = "py -3.12"
 arch      = "amd64"
 ```
 
-One-time SSH prep on each remote host:
+Complete one-time setup on the Windows host (do these in order):
 
-1. **Key-based login.** `ssh-copy-id builder@host` (or add your public key
-   to the host). Verify: `ssh builder@host echo ok` returns instantly.
-2. **Clone the repo** on that host at the `repo` path (your source of truth
-   is GitHub — `build_all.py` runs `git pull` there before each build).
-3. **Install build.py's prerequisites** on that host (a compatible Python
-   plus the OS toolchain — see this guide's Requirements). Put `git` and the
-   `python` you named on the host's PATH.
-4. **Windows only:** enable OpenSSH Server (Settings → Optional Features →
-   Add a feature → OpenSSH Server), then `Start-Service sshd`.
+1. **Enable the OpenSSH Server.** Settings → System → Optional Features →
+   Add a feature → **OpenSSH Server** → Install. Then in an *admin*
+   PowerShell:
+   ```powershell
+   Start-Service sshd
+   Set-Service -Name sshd -StartupType Automatic
+   ```
+2. **Confirm the host's IP / username.** `ipconfig` for the IP;
+   `whoami` for the `user` part of `builder@host`.
+3. **Set up key-based login** from the Linux box (no password prompts):
+   ```bash
+   ssh-copy-id builder@192.168.1.50      # or paste your pubkey manually
+   ssh builder@192.168.1.50 echo ok      # must return "ok" instantly
+   ```
+   If `ssh-copy-id` is unavailable on Windows, append your
+   `~/.ssh/id_*.pub` to `C:\Users\builder\.ssh\authorized_keys` on the host.
+4. **Install build.py's prerequisites on the host:** a compatible Python
+   (3.12 recommended for MinGW64; see Requirements), plus Git. Make sure
+   both `git` and the interpreter you named in `python` (e.g. `py -3.12`)
+   are on that host's PATH — test over SSH:
+   ```bash
+   ssh builder@192.168.1.50 "git --version && py -3.12 --version"
+   ```
+5. **Clone the project repo on the host** at the `repo` path (your source of
+   truth is GitHub — `build_all.py` runs `git pull` there before each build):
+   ```bash
+   ssh builder@192.168.1.50 "git clone https://github.com/king-aj3/MyApp C:/Users/builder/dev/MyApp"
+   ```
+   Clone Build_Scripts on the host too, at the `build_py` path's parent.
 
-Then re-run `build_all.py` — the new host builds and its binary lands in
-`dist/windows-amd64/`.
+Then re-run `build_all.py` (drop `--only`, or use `--only windows`) — the new
+host builds and its binary is copied back into `dist/windows-amd64/` via
+rsync (or scp fallback).
 
 ### macOS without a Mac
 
@@ -551,3 +576,93 @@ dist/linux-x86_64/  ->  dist/<project>-linux-x86_64.tar.gz
 ```
 
 Windows and macOS outputs are left as-is. Re-runs overwrite the archive.
+
+---
+
+## 11. First-time three-OS setup checklist
+
+A start-to-finish runbook for going from "only my local OS builds" to all
+three. Do it once per project. Ordered so each step's failure is obvious.
+
+### A. One-time, global (do once ever)
+
+1. **Push Build_Scripts to GitHub** as its own repo (e.g.
+   `king-aj3/Build_Scripts`). Confirm it has `build.py` at the root:
+   `gh repo view king-aj3/Build_Scripts` succeeds.
+2. **Create a fine-grained PAT** that can read Build_Scripts:
+   GitHub → avatar → Settings → Developer settings → Personal access tokens
+   → Fine-grained tokens → Generate new token.
+   - Repository access: **Only select repositories → Build_Scripts**
+   - Permissions → Repository → **Contents: Read-only** (nothing else)
+   - Generate and copy it (shown once).
+3. **Verify the token before using it anywhere:**
+   ```bash
+   GH_TOKEN=<paste-PAT> gh api repos/king-aj3/Build_Scripts --jq .full_name
+   ```
+   Must print `king-aj3/Build_Scripts`. If it says *Bad credentials*, the
+   token is wrong; if *Not Found*, its repo-access list is wrong. Fix before
+   continuing — a bad token here is the #1 cause of build failures later.
+4. **Authenticate the GitHub CLI** on the Linux box (for dispatching):
+   `gh auth login`, then `gh auth status` to confirm.
+
+### B. Per project (ajj3-brain, WealthBuilder, Thrift…)
+
+5. **Confirm the repo's exact name and default branch:**
+   ```bash
+   gh repo list king-aj3 --limit 50          # exact name (case-sensitive)
+   gh repo view king-aj3/<REPO> --json defaultBranchRef -q .defaultBranchRef.name
+   ```
+   Note the branch (often `master`, not `main`). A wrong branch = 422
+   "No ref found"; a wrong name = 404.
+6. **Add the macOS workflow to the project repo.** Copy
+   `Build_Scripts/examples/macos-build.yml` to the project's
+   `.github/workflows/macos-build.yml`, then edit ONE line:
+   ```yaml
+   repository: king-aj3/Build_Scripts
+   ```
+   Watch the slash — `king-aj3Build_Scripts` (missing `/`) errors with
+   "Invalid repository … Expected format {owner}/{repo}". Commit and push.
+7. **Set the token secret in the project repo** (paste the *verified* PAT
+   from step 3 — not a fresh copy you haven't checked):
+   ```bash
+   gh secret set BUILD_SCRIPTS_TOKEN -R king-aj3/<REPO>
+   ```
+   If `gh` returns 404 here, the repo name is wrong — recheck step 5. The
+   secret name must be exactly `BUILD_SCRIPTS_TOKEN`.
+8. **Generate and edit `build_hosts.toml`** in the project root:
+   ```bash
+   python3 <Build_Scripts>/build_all.py /path/to/<REPO> --init
+   ```
+   Then set the macOS block (the stub is github-transport, disabled):
+   ```toml
+   [hosts.macos]
+   enabled   = true
+   transport = "github"
+   gh_repo   = "king-aj3/<REPO>"
+   ref       = "master"            # the branch from step 5
+   arch      = "arm64"
+   ```
+9. **Build macOS alone first** to validate the chain end-to-end:
+   ```bash
+   python3 <Build_Scripts>/build_all.py /path/to/<REPO> --only macos
+   ```
+   On success the SUMMARY shows the GitHub build time and the binary lands in
+   `dist/macos-arm64/`. (If the artifact download flakes with a
+   `blob.core.windows.net` error, that's a transient Azure hiccup — v1.2.1
+   retries automatically; it is **not** a firewall issue.)
+10. **Add the Windows SSH host** per §10 Step 3, then the full run builds all
+    three plus the Linux tar.gz:
+    ```bash
+    python3 <Build_Scripts>/build_all.py /path/to/<REPO>
+    ```
+
+### Failure quick-reference
+
+| Symptom (in `gh run view … --log`)            | Cause / fix                                              |
+| --------------------------------------------- | ------------------------------------------------------- |
+| `422 No ref found for: main`                  | Wrong `ref` — set it to the repo's real default branch. |
+| `Invalid repository 'OWNERREPO'`              | Missing `/` in the workflow `repository:` line.         |
+| `repository: OWNER/Build_Scripts` (unchanged) | You didn't replace the `OWNER` placeholder in the YAML. |
+| **First** checkout OK, **second** Bad credentials | The `BUILD_SCRIPTS_TOKEN` secret in *that* repo is bad — re-set it with the verified PAT (step 3). |
+| `404` from `gh secret set`                    | Wrong repo name — `gh repo list king-aj3` for the exact one. |
+| `error connecting to *.blob.core.windows.net` | Transient; auto-retried. Not the firewall (Mint `ufw` allows outbound). |

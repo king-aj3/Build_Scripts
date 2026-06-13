@@ -605,6 +605,32 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
 
 ## Open items / future work
 
+- **[IN PROGRESS] Three-OS release via `build_all.py`.** Status as of
+  2026-06-12 (pick up here):
+  - **macOS (github transport): WORKING.** ajj3-brain built green on a
+    macos-15-arm64 runner in ~4m10s and the artifact pulled back to
+    `dist/macos-arm64/`. Per-project setup needs: workflow file with the real
+    `king-aj3/Build_Scripts` repo, a verified `BUILD_SCRIPTS_TOKEN` secret,
+    and `ref = "master"` in `[hosts.macos]`.
+  - **Per-project secrets:** ajj3-brain ✓ (after re-set). WealthBuilder had a
+    bad/garbled secret on first try (first checkout OK, second "Bad
+    credentials") — re-set with the verified PAT. Thrift's secret was never
+    set (404 on guessed repo name) — find the real name via
+    `gh repo list king-aj3` and `gh secret set` it.
+  - **Windows host (SSH): NOT YET DONE — finish next.** The generated
+    `[hosts.windows]` stub is `enabled = false` with SSH placeholders. Plan:
+    SSH into the existing Windows guest VM (`transport = "ssh"`) so the build
+    runs natively and keeps MSVC auto-select + pymupdf bytecode + EDR retry
+    patch. A GitHub Actions windows-latest runner was considered and rejected
+    (no MSVC/winget control, can't tune the pymupdf 2.2M-line C ceiling,
+    slower). Full step-by-step is in USER_GUIDE §10 Step 3; the work is just
+    executing it: enable sshd on the VM, key login, clone repo + Build_Scripts
+    on the host, set `enabled = true` + ssh/repo/build_py/python/arch, then
+    `build_all.py <proj> --only windows`.
+  - **Remaining validation:** confirm the macOS binaries actually *run* on a
+    Mac (only build-success is proven so far); build WealthBuilder then Thrift
+    once their secrets are fixed; Thrift is the real test of pymupdf bytecode
+    mode carrying to macOS.
 - **PyInstaller backend (fallback).** v1.8.0's bytecode-mode handling
   for pymupdf is confirmed working, so this is no longer the imminent
   next step. It remains the documented escape if a future package proves
