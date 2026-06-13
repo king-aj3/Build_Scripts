@@ -2,9 +2,23 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.10.0  (build.py)
-**Orchestrator:** build_all.py v1.2.1
+**Orchestrator:** build_all.py v1.2.2
 **Date:** 2026-06-13
 **License:** Internal use
+
+## What's new in build_all.py 1.2.2
+
+- **Windows SSH copy-back fixed.** The artifact pull probed only the local
+  side for rsync (`shutil.which`), so on a Linux orchestrator it always chose
+  rsync — but a Windows host has no rsync, so the transfer failed after a
+  successful build. It now probes the **remote** for rsync over ssh and falls
+  back to **scp** (riding the host's OpenSSH) when rsync isn't on both ends.
+  Windows `.exe` builds now copy back cleanly.
+- **Remote `git pull` hardened against GCM-over-ssh.** Git Credential Manager
+  can't reach `/dev/tty` to prompt over a non-interactive ssh session, so a
+  private-repo pull errored. The pull now runs with
+  `credential.interactive=false` so it fails fast (and we continue with the
+  existing remote tree); `--no-pull` skips it entirely.
 
 ## What's new in the docs (2026-06-13)
 

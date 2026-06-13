@@ -725,6 +725,15 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-13 — build_all.py v1.2.2: Windows SSH host fixes. (1) Copy-back
+  probed only the local side for rsync via `shutil.which`, so a Linux
+  orchestrator always picked rsync even though Windows hosts have none — the
+  transfer failed after a successful 19-min build. Now probes the remote over
+  ssh (`rsync --version`) and falls back to scp when rsync isn't on both ends.
+  (2) Remote `git pull` hardened with `credential.interactive=false` so GCM
+  doesn't try to prompt `/dev/tty` over non-interactive ssh (was a non-fatal
+  warning, now fails clean; `--no-pull` skips). WealthBuilder Windows .exe
+  (48 MB, MSVC 14.5) was the first native SSH-VM build — proved the chain.
 - 2026-06-12 — build_all.py v1.2.1: github transport retries the artifact
   download 4× (10/20/30s backoff) — a just-uploaded artifact can transiently
   fail to connect to Azure blob storage (`*.blob.core.windows.net`) even

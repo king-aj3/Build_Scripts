@@ -66,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.1"
+ORCH_VERSION = "1.2.2"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -310,8 +310,16 @@ def build_remote(name: str, host: dict, project_dir: Path, label: str,
 
     if pull:
         step(f"git pull (remote {host['ssh']}: {repo})")
-        if run(sb + [f'git -C "{repo}" pull --ff-only'], dry) != 0:
-            warn("remote git pull failed; continuing with existing tree.")
+        # Over a non-interactive ssh session, Git Credential Manager can't
+        # reach /dev/tty to prompt, so a private-repo pull errors. Force
+        # non-interactive auth so it fails fast (we continue with the existing
+        # tree) instead of hanging or erroring noisily.
+        pull_cmd = (f'git -C "{repo}" -c credential.interactive=false '
+                    f'-c core.askPass= pull --ff-only')
+        if run(sb + [pull_cmd], dry) != 0:
+            warn("remote git pull failed (often GCM auth over ssh); "
+                 "continuing with the existing remote tree. "
+                 "Use --no-pull to skip this step.")
 
     flags = " ".join(passthrough)
     remote_cmd = f'{python} "{remote_build_py}" "{repo}" {flags}'.strip()
@@ -319,14 +327,28 @@ def build_remote(name: str, host: dict, project_dir: Path, label: str,
     if run(sb + [remote_cmd], dry) != 0:
         return False
 
-    # Pull the artifact back into dist/<label>/ (prefer rsync, fall back to scp).
+    # Pull the artifact back into dist/<label>/.
+    # rsync needs the binary on BOTH ends — a Windows host has neither rsync
+    # nor a daemon, so probing only the local side (shutil.which) wrongly
+    # picks rsync and the remote leg fails. Probe the REMOTE too; fall back
+    # to scp (which rides the host's OpenSSH) when rsync isn't on both ends.
     target = project_dir / "dist" / label
     if not dry:
         if target.exists():
             shutil.rmtree(target)
         target.mkdir(parents=True, exist_ok=True)
     remote_dist = f'{repo.rstrip("/")}/dist/'
-    if shutil.which("rsync"):
+
+    remote_has_rsync = False
+    if shutil.which("rsync") and not dry:
+        # `rsync --version` over ssh: rc 0 means it exists on the remote.
+        probe = subprocess.run(sb + ["rsync --version"],
+                               capture_output=True, text=True)
+        remote_has_rsync = probe.returncode == 0
+    elif shutil.which("rsync") and dry:
+        remote_has_rsync = True  # assume yes for dry-run printing
+
+    if remote_has_rsync:
         rsh = "ssh"
         if host.get("key"):
             rsh += f" -i {Path(host['key']).expanduser()}"
@@ -339,7 +361,10 @@ def build_remote(name: str, host: dict, project_dir: Path, label: str,
         if "--standalone" in passthrough:
             cmd.remove("--exclude"); cmd.remove("*/")
         return run(cmd, dry) == 0
-    # scp fallback
+
+    # scp fallback (Windows hosts, or rsync missing on either end)
+    if not remote_has_rsync and shutil.which("rsync"):
+        step("remote has no rsync; using scp to copy artifacts back")
     scp = ["scp", "-r"]
     if host.get("key"):
         scp += ["-i", str(Path(host["key"]).expanduser())]
