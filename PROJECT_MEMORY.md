@@ -647,7 +647,35 @@ build_env (wiped by `--clean-env` / upgrades — that was the stopgap on
 layout, the script warns ("layout changed") instead of failing, and the
 patch needs a refresh.
 
+## macOS via GitHub Actions: arm64 only, dispatched by build_all (v1.2.0 orch)
+
+There is no legal macOS VM off Apple hardware, so the macOS host in
+`build_hosts.toml` is either a real Mac over SSH or `transport = "github"`.
+The github transport dispatches `.github/workflows/macos-build.yml` (in the
+PROJECT repo) via the `gh` CLI, waits with `gh run watch --exit-status`, and
+downloads the artifact into `dist/macos-arm64/`. Design decisions:
+
+- **Intel (x86_64) macOS is deliberately not built.** The earlier two-job
+  matrix (macos-13 Intel + macos-latest arm64) was removed by explicit user
+  decision — do not reinstate an Intel job.
+- **Manual-only trigger (`workflow_dispatch`).** The user wants the macOS
+  build to happen only when they execute `build_all.py`, never on push —
+  the orchestrator is the single button for all three OSes.
+- **Build_Scripts reaches the runner as a second checkout** (its own GitHub
+  repo, `path: .build_scripts`), not by copying build.py into each project —
+  copies drift. Private repo access goes through the `BUILD_SCRIPTS_TOKEN`
+  fine-grained PAT secret.
+- **Linux tar.gz is automatic, not flag-gated.** `_package_linux()` runs
+  after every build_all run and packages each successful linux label as
+  `dist/<project>-<label>.tar.gz`. Windows (.exe) and macOS outputs are
+  shipped as-is by user decision.
+
 ## Changelog
+- 2026-06-12 — build_all.py v1.2.0: new `transport = "github"`
+  (`build_github()`: gh dispatch → watch → artifact download, keys gh_repo /
+  workflow / ref / artifact) and automatic Linux tar.gz packaging
+  (`_package_linux()`). `examples/macos-build.yml` added (arm64 only,
+  workflow_dispatch only); template + all docs updated. Intel macOS removed.
 - 2026-06-10 — v1.10.0 (build.py): env setup now patches the build env's
   Nuitka (`decoratorRetries` 5×1s → 40×2s) so EDR (CylancePROTECT) can't kill
   the resource-embedding step; idempotent, re-applies after --clean-env,

@@ -96,6 +96,7 @@ For existing projects, you can also copy one of the pre-made configs in
 - `examples/build_config.Thrift.toml` — for Thrift Reseller Tracker
 - `examples/build_config.template.toml` — blank template, all options documented
 - `examples/build_hosts.template.toml` — host map for cross-OS `build_all.py`
+- `examples/macos-build.yml` — GitHub Actions workflow for the macOS (arm64) host
 
 ### 2. Set up the PyCharm External Tool (one-time, per IDE)
 
@@ -127,14 +128,17 @@ python <Build_Scripts>/build_all.py "/path/to/project" -- --standalone --clean
 ```
 
 It reads `build_hosts.toml` from the project root and, for every **enabled**
-host, either builds locally (`transport = "local"`) or over SSH
-(`transport = "ssh"` — `git pull`, remote `build.py`, copy artifact back).
-Outputs are collected per-OS so they never collide:
+host, builds locally (`transport = "local"`), over SSH (`transport = "ssh"`
+— `git pull`, remote `build.py`, copy artifact back), or on a GitHub
+Actions Apple Silicon runner (`transport = "github"` — dispatch the
+workflow via `gh`, wait, download the artifact; arm64 only, no Intel
+macOS). Outputs are collected per-OS so they never collide:
 
 ```
 <project>/dist/linux-x86_64/
 <project>/dist/windows-amd64/
 <project>/dist/macos-arm64/
+<project>/dist/<project>-linux-x86_64.tar.gz   (auto-packaged)
 ```
 
 `build.py` is unchanged — every one of its flags passes straight through

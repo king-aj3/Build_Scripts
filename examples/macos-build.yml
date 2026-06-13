@@ -1,0 +1,41 @@
+# macos-build.yml — GitHub Actions macOS (Apple Silicon, arm64 ONLY) build.
+# =========================================================================
+# Copy to:  <your project repo>/.github/workflows/macos-build.yml
+#
+# Triggered manually only (workflow_dispatch) — normally by build_all.py's
+# transport = "github" host via the `gh` CLI, so a single build_all.py run
+# produces all three OS binaries. No Intel (x86_64) macOS job by design.
+#
+# One-time setup:
+#   1. Replace OWNER/Build_Scripts below with your Build_Scripts repo.
+#   2. If Build_Scripts is PRIVATE: create a fine-grained PAT with read
+#      access to it, save as repo secret BUILD_SCRIPTS_TOKEN.
+#      If PUBLIC: delete the `token:` line.
+
+name: macos-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest          # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: OWNER/Build_Scripts
+          path: .build_scripts
+          token: ${{ secrets.BUILD_SCRIPTS_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - run: python .build_scripts/build.py . --ci --onefile
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/*

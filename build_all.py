@@ -12,8 +12,13 @@ It reads `build_hosts.toml`, then for every ENABLED host:
   * transport = "local"  -> runs build.py on THIS machine.
   * transport = "ssh"    -> ssh in, `git pull` the repo, run the remote
                             build.py, and copy the artifact back.
+  * transport = "github" -> dispatch a GitHub Actions workflow (gh CLI),
+                            wait for it, download the artifact. Used for
+                            macOS (Apple Silicon / arm64) without a Mac.
 
 All artifacts land in   <project>/dist/<os>-<arch>/   so they never collide.
+After the run, every successful LINUX host's output is also packaged as
+<project>/dist/<project>-<os>-<arch>.tar.gz automatically.
 build.py itself is untouched; every build.py flag passes straight through.
 
 USAGE
@@ -61,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.1.0"
+ORCH_VERSION = "1.2.0"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -154,10 +159,22 @@ def _host_block(name: str, local_os: str, local_arch: str, ex: dict) -> str:
     note = ""
     if name == "macos":
         note = ("# macOS needs Apple hardware (no legal VM elsewhere). No Mac?\n"
-                "# Use a GitHub Actions macos runner — see USER_GUIDE.md \u00a710.\n")
+                "# Set transport = \"github\" + gh_repo = \"OWNER/REPO\" to build\n"
+                "# on a GitHub Actions arm64 runner — see USER_GUIDE.md \u00a710.\n")
     def field(k: str, default_stub: str) -> str:
         v = g(k)
         return f'{k:<9} = "{v}"' if v else default_stub
+    if name == "macos" and not g("ssh"):
+        # No Mac on the network — default the stub to the github transport.
+        return (note + textwrap.dedent(f"""\
+            [hosts.{name}]
+            enabled   = {enabled}
+            transport = "github"
+            """)
+            + field("gh_repo",  '# gh_repo = "OWNER/REPO"        # the PROJECT repo on GitHub') + "\n"
+            + field("workflow", '# workflow= "macos-build.yml"   # default') + "\n"
+            + field("ref",      '# ref     = "main"              # default') + "\n"
+            + f'arch      = "{arch}"\n')
     return (note + textwrap.dedent(f"""\
         [hosts.{name}]
         enabled   = {enabled}
@@ -332,6 +349,80 @@ def build_remote(name: str, host: dict, project_dir: Path, label: str,
     return run(scp, dry) == 0
 
 
+def build_github(name: str, host: dict, project_dir: Path, label: str,
+                 dry: bool) -> bool:
+    """Dispatch a GitHub Actions workflow via `gh`, wait, download artifact."""
+    if not shutil.which("gh"):
+        warn(f"host '{name}' (github): `gh` CLI not found on PATH; skipping.")
+        return False
+    gh_repo = host.get("gh_repo")
+    if not gh_repo:
+        warn(f"host '{name}' (github) is missing required key 'gh_repo'; skipping.")
+        return False
+    workflow = host.get("workflow", "macos-build.yml")
+    ref = host.get("ref", "main")
+    artifact = host.get("artifact", label)
+
+    step(f"dispatching {workflow} on {gh_repo} (ref {ref})")
+    if run(["gh", "workflow", "run", workflow, "-R", gh_repo, "--ref", ref],
+           dry) != 0:
+        return False
+    if dry:
+        return True
+
+    # Find the run we just started (newest run of this workflow).
+    import json as _json
+    import time as _time
+    _time.sleep(5)  # give GitHub a moment to register the run
+    out = subprocess.run(
+        ["gh", "run", "list", "-R", gh_repo, "--workflow", workflow,
+         "--limit", "1", "--json", "databaseId"],
+        capture_output=True, text=True)
+    try:
+        run_id = str(_json.loads(out.stdout)[0]["databaseId"])
+    except (ValueError, IndexError, KeyError):
+        warn("could not determine the dispatched run id.")
+        return False
+
+    step(f"waiting on run {run_id} (this is the macOS compile — be patient)")
+    if run(["gh", "run", "watch", run_id, "-R", gh_repo, "--exit-status"],
+           dry) != 0:
+        warn(f"workflow run failed — see: gh run view {run_id} -R {gh_repo} --log")
+        return False
+
+    target = project_dir / "dist" / label
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    step(f"downloading artifact '{artifact}' -> dist/{label}/")
+    return run(["gh", "run", "download", run_id, "-R", gh_repo,
+                "-n", artifact, "-D", str(target)], dry) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Linux packaging (automatic)
+# ─────────────────────────────────────────────────────────────────────────────
+def _package_linux(project_dir: Path,
+                   results: list[tuple[str, str, bool]], dry: bool) -> None:
+    """tar.gz every successful linux host's dist/<label>/ folder."""
+    import tarfile
+    for name, label, ok in results:
+        if not ok or not label.startswith("linux"):
+            continue
+        src = project_dir / "dist" / label
+        if not src.is_dir():
+            continue
+        tgz = project_dir / "dist" / f"{project_dir.name}-{label}.tar.gz"
+        step(f"packaging dist/{label}/ -> {tgz.name}")
+        if dry:
+            continue
+        if tgz.exists():
+            tgz.unlink()
+        with tarfile.open(tgz, "w:gz") as tf:
+            for entry in sorted(src.iterdir()):
+                tf.add(entry, arcname=entry.name)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
@@ -409,10 +500,14 @@ def main() -> None:
         elif transport == "ssh":
             ok = build_remote(name, host, project_dir, label,
                               passthrough, pull, args.dry_run)
+        elif transport == "github":
+            ok = build_github(name, host, project_dir, label, args.dry_run)
         else:
             warn(f"host '{name}': unknown transport '{transport}'; skipping.")
             ok = False
         results.append((name, label, ok))
+
+    _package_linux(project_dir, results, args.dry_run)
 
     banner("SUMMARY")
     if not results:

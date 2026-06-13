@@ -244,10 +244,16 @@ python build_all.py <project_dir> [orchestrator-opts] [-- build.py-flags]
 | `-- ...`       | Everything after `--` is forwarded verbatim to `build.py` on every host. |
 
 Host map (`build_hosts.toml`, per-project): each `[hosts.<name>]` is
-`enabled`, `transport = "local"|"ssh"`, and an `arch` that forms the output
-label `<name>-<arch>`. SSH hosts also need `ssh`, `repo`, `build_py`, and
-optionally `python`, `key`, `port`. See
-`examples/build_hosts.template.toml`.
+`enabled`, `transport = "local"|"ssh"|"github"`, and an `arch` that forms the
+output label `<name>-<arch>`. SSH hosts also need `ssh`, `repo`, `build_py`,
+and optionally `python`, `key`, `port`. GitHub hosts (macOS arm64 via an
+Actions runner — Intel macOS is not built) need `gh_repo = "OWNER/REPO"` plus
+an authenticated `gh` CLI, and optionally `workflow`, `ref`, `artifact`. See
+`examples/build_hosts.template.toml` and `examples/macos-build.yml`.
+
+After every run, each successful **linux** host's `dist/<label>/` is
+automatically packaged to `dist/<project>-<label>.tar.gz` (overwritten on
+re-runs). Windows/macOS outputs are left as-is.
 
 ### Recipes
 
@@ -275,3 +281,9 @@ OpenSSH Server (Settings → Optional Features) and ensure `git` and your
 if present, else `scp`. Check the remote build actually produced
 `<repo>/dist/`. Folder (`--standalone`) builds copy the whole `dist/<name>/`
 directory; onefile copies the single file.
+
+**GitHub host: "gh CLI not found" / auth errors** — install the GitHub CLI
+and run `gh auth login` once (`gh auth status` to verify). The workflow file
+must exist in the project repo at `.github/workflows/macos-build.yml`
+(copy from `examples/macos-build.yml`); a failed run can be inspected with
+`gh run view <id> -R OWNER/REPO --log`.

@@ -42,15 +42,28 @@ arch      = "amd64"                          # -> dist/windows-amd64/
 
 
 # ── macOS build host. Requires Apple hardware (Mac mini, etc.) — macOS may ───
-# not legally run in a VM on non-Apple machines. If you have no Mac, the
-# practical route for the macOS binary is a GitHub Actions macOS runner
-# (your repos are already on GitHub); see USER_GUIDE.md "macOS without a Mac".
+# not legally run in a VM on non-Apple machines. Two routes:
+#   transport = "ssh"     — a real Mac on your network (fields as below).
+#   transport = "github"  — no Mac needed: dispatches the macos-build.yml
+#                           workflow on a GitHub Actions Apple Silicon runner
+#                           via the `gh` CLI, waits, downloads the artifact.
+#                           Intel (x86_64) macOS is NOT built — arm64 only.
 [hosts.macos]
 enabled   = false
-transport = "ssh"
-ssh       = "builder@192.168.1.60"
-# key     = "~/.ssh/id_ed25519"
-repo      = "/Users/builder/dev/MyApp"
-build_py  = "/Users/builder/dev/Build_Scripts/build.py"
-python    = "python3"
-arch      = "arm64"                          # or x86_64 on Intel Macs
+transport = "github"
+gh_repo   = "OWNER/MyApp"                    # the PROJECT repo on GitHub
+# workflow= "macos-build.yml"                # default
+# ref     = "main"                           # default
+# artifact= "macos-arm64"                    # default = <name>-<arch>
+arch      = "arm64"                          # -> dist/macos-arm64/
+
+# SSH variant (when you have a Mac):
+# [hosts.macos]
+# enabled   = true
+# transport = "ssh"
+# ssh       = "builder@192.168.1.60"
+# # key     = "~/.ssh/id_ed25519"
+# repo      = "/Users/builder/dev/MyApp"
+# build_py  = "/Users/builder/dev/Build_Scripts/build.py"
+# python    = "python3"
+# arch      = "arm64"

@@ -2,9 +2,20 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.10.0  (build.py)
-**Orchestrator:** build_all.py v1.1.0
-**Date:** 2026-06-10
+**Orchestrator:** build_all.py v1.2.0
+**Date:** 2026-06-12
 **License:** Internal use
+
+## What's new in build_all.py 1.2.0
+
+- **`transport = "github"`** — builds the macOS binary on a GitHub Actions
+  **Apple Silicon (arm64) runner** with no Mac on the network: dispatches
+  `.github/workflows/macos-build.yml` via the `gh` CLI, waits, and downloads
+  the artifact into `dist/macos-arm64/` within the same `build_all.py` run.
+  The workflow is manual-only (`workflow_dispatch`) and **Intel (x86_64)
+  macOS is intentionally not built**. Template: `examples/macos-build.yml`.
+- **Automatic Linux packaging** — after every run, each successful linux
+  host's `dist/<label>/` is tar.gz'd to `dist/<project>-<label>.tar.gz`.
 
 ## What's new in 1.10.0 (build.py)
 

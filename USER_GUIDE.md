@@ -514,22 +514,40 @@ options:
 
 - **A Mac** (even a low-end Mac mini) as an SSH host — same `[hosts.macos]`
   pattern as above.
-- **A GitHub Actions macOS runner** — your repos are already on GitHub, so
-  this needs no local hardware. Keep everything else local and let CI build
-  *only* macOS:
+- **`transport = "github"`** — no Mac needed. `build_all.py` dispatches a
+  GitHub Actions workflow on an **Apple Silicon (arm64) runner**, waits for
+  it, and downloads the artifact into `dist/macos-arm64/` — all within the
+  same `build_all.py` run as your local Linux and SSH Windows builds.
+  **Intel (x86_64) macOS is intentionally not built.**
 
-```yaml
-jobs:
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.13' }
-      - run: python <Build_Scripts>/build.py . --ci --onefile
-      - uses: actions/upload-artifact@v4
-        with: { name: macos-arm64, path: dist/* }
+One-time setup for the github transport:
+
+1. Copy `examples/macos-build.yml` to the **project repo** as
+   `.github/workflows/macos-build.yml`; set the `OWNER/Build_Scripts`
+   checkout (and `BUILD_SCRIPTS_TOKEN` secret if Build_Scripts is private).
+2. Install + authenticate the GitHub CLI on the orchestrating machine:
+   `gh auth login` (verify with `gh auth status`).
+3. In `build_hosts.toml`:
+
+```toml
+[hosts.macos]
+enabled   = true
+transport = "github"
+gh_repo   = "OWNER/MyApp"     # the project repo
+arch      = "arm64"
 ```
 
-Download the artifact and drop it into `dist/macos-arm64/` to complete the
-three-OS set.
+Optional keys: `workflow` (default `macos-build.yml`), `ref` (default
+`main`), `artifact` (default `macos-arm64`). The workflow itself is
+manual-only (`workflow_dispatch`) — it never burns runner minutes on push.
+
+### Linux packaging (automatic)
+
+After every `build_all.py` run, each successful **linux** host's output
+folder is packaged automatically:
+
+```
+dist/linux-x86_64/  ->  dist/<project>-linux-x86_64.tar.gz
+```
+
+Windows and macOS outputs are left as-is. Re-runs overwrite the archive.
