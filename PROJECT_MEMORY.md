@@ -58,13 +58,22 @@ through after `--` instead.
 
 ## v1.8.2 — RAM-aware default jobs (zstd onefile OOM fix)
 
-A My_LLM onefile build on a Threadripper 3990X (64C/128T, 32 GB) failed at
-the final stage with `zstandard ... ZstdError: not enough memory`. The C
-compile and link had succeeded; only the zstd payload compression OOM'd.
-Root cause: the default `jobs = multiprocessing.cpu_count()` returned 128,
-and with LTO=auto→yes on Linux, that many concurrent link jobs left no RAM
-for zstd to allocate its compression context. Verified by a manual run with
-`--jobs=4 --lto=no`, which compressed fine (16.5 MB → 5.7 MB, 34.5%).
+A My_LLM onefile build failed at the final stage with
+`zstandard ... ZstdError: not enough memory`. The C compile and link had
+succeeded; only the zstd payload compression OOM'd. Root cause: the default
+`jobs = multiprocessing.cpu_count()` returned a high core count, and with LTO
+enabled that many concurrent link jobs left no RAM for zstd to allocate its
+compression context. Verified by a manual run with `--jobs=4 --lto=no`, which
+compressed fine (16.5 MB → 5.7 MB, 34.5%).
+
+> **Correction (2026-06-13):** an earlier version of this note attributed the
+> failure to "a Threadripper 3990X (64C/128T, 32 GB)" on Linux. That machine
+> attribution was **wrong** — the OOM occurred on a **different Windows
+> box**, not this Linux 3990X. The specific core count, RAM figure, and
+> LTO-on-Linux framing in the original were unreliable and have been removed.
+> What remains verified: the symptom (zstd OOM at the payload stage), the
+> cause (default jobs from `cpu_count()` starving zstd of RAM), and the fix
+> below. The 3990X itself has 64 GB and is unrelated to this incident.
 
 Fix: new `_safe_jobs()` / `_total_ram_gb()` helpers cap the *default* job
 count to `min(cpu, (RAM_GB - 4) / 1.5, 32)`. Rationale for the formula: LTO
@@ -631,6 +640,25 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
     Mac (only build-success is proven so far); build WealthBuilder then Thrift
     once their secrets are fixed; Thrift is the real test of pymupdf bytecode
     mode carrying to macOS.
+- **[ROADMAP] Parallel build-matrix mode (project × OS aware).** Today
+  `build_all.py` is sequential across hosts within one project, and there's
+  no coordination *across* projects — running two `build_all.py` invocations
+  at once would collide on the shared Windows VM. A future top-level mode
+  could parallelize intelligently by where the work runs:
+  - **macOS: fully parallel.** Each GitHub runner is a separate cloud VM;
+    fire all dispatches at once (bounded by the plan's concurrent-job limit,
+    ~5 on Pro). Strongest win — N projects' macOS builds in ~one build's time.
+  - **Linux: RAM-bounded parallelism.** All run on this one Threadripper
+    (64 GB). Cap concurrency by RAM, not cores — `_safe_jobs()` already
+    throttles per-build job count, but N concurrent Nuitka builds still
+    multiply peak RAM; ~2 at a time is the realistic ceiling.
+  - **Windows: strictly serial behind a lock.** One VM, one `py -3.12`,
+    shared CPU/RAM — the genuine long pole. Needs a cross-process lock so
+    multiple project builds queue instead of colliding.
+  Design task, not trivial: needs a scheduler/lock layer above the current
+  per-project host loop. The natural shape is "dispatch all macOS, run Linux
+  with a small pool, serialize Windows," with Windows as the critical path
+  everything else finishes before.
 - **PyInstaller backend (fallback).** v1.8.0's bytecode-mode handling
   for pymupdf is confirmed working, so this is no longer the imminent
   next step. It remains the documented escape if a future package proves

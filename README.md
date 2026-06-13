@@ -176,6 +176,10 @@ runner) — see `USER_GUIDE.md` → "macOS without a Mac".
     `BUILD_SCRIPTS_TOKEN` secret, enable hosts in `build_hosts.toml`.
 - **Code signing.** Unsigned binaries today; a `[codesign]` TOML section
   (Windows cert thumbprint, macOS developer ID) would close the gap.
+- **Parallel build-matrix mode.** Build N projects across OSes concurrently —
+  macOS dispatches in parallel (separate cloud runners), Linux RAM-bounded,
+  Windows serialized behind a lock (shared VM). Needs a scheduler above the
+  current per-project sequential host loop.
 
 ---
 

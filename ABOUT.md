@@ -150,14 +150,19 @@ updated; `USER_GUIDE.md` §10 covers SSH host setup and the
 ## What's new in 1.8.2
 
 **RAM-aware default job count (fixes zstd "not enough memory" onefile
-crash).** The default was `multiprocessing.cpu_count()` — 128 on a
-Threadripper 3990X. With LTO on, 128 parallel link jobs exhausted a
-32 GB machine, and the onefile build died at the final zstd payload
-compression with `ZstdError: not enough memory` (the C compile and link
-had already succeeded). Jobs are now capped by available RAM: ~1.5 GB
-budgeted per LTO job, 4 GB headroom, hard ceiling of 32. On the 3990X
-+ 32 GB this resolves to 18 jobs. An explicit `--jobs N` is still
-honored as-is, and LTO behavior is unchanged.
+crash).** The default was `multiprocessing.cpu_count()`, which on a
+high-core-count machine returns a large number; with LTO on, that many
+parallel link jobs exhausted available RAM, and the onefile build died at
+the final zstd payload compression with `ZstdError: not enough memory` (the
+C compile and link had already succeeded). Jobs are now capped by available
+RAM: ~1.5 GB budgeted per LTO job, 4 GB headroom, hard ceiling of 32, read
+at runtime via `_total_ram_gb()`. An explicit `--jobs N` is still honored
+as-is, and LTO behavior is unchanged.
+
+> Correction (2026-06-13): an earlier wording pinned this to "a Threadripper
+> 3990X … 32 GB"; the incident was actually on a different Windows box. The
+> specific machine details were wrong and have been removed — the mechanics
+> (cap formula, runtime RAM read) are unaffected.
 
 ## What's new in 1.8.1
 
