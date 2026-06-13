@@ -403,10 +403,10 @@ def build_github(name: str, host: dict, project_dir: Path, label: str,
 #  Linux packaging (automatic)
 # ─────────────────────────────────────────────────────────────────────────────
 def _package_linux(project_dir: Path,
-                   results: list[tuple[str, str, bool]], dry: bool) -> None:
+                   results: list[tuple[str, str, bool, float]], dry: bool) -> None:
     """tar.gz every successful linux host's dist/<label>/ folder."""
     import tarfile
-    for name, label, ok in results:
+    for name, label, ok, _dur in results:
         if not ok or not label.startswith("linux"):
             continue
         src = project_dir / "dist" / label
@@ -484,7 +484,8 @@ def main() -> None:
     say(f"  build  : {build_py}")
     say(f"  pull   : {pull}   passthrough: {' '.join(passthrough) or '(none)'}")
 
-    results: list[tuple[str, str, bool]] = []
+    results: list[tuple[str, str, bool, float]] = []
+    import time as _time
     for name, host in hosts.items():
         if not host.get("enabled", False):
             continue
@@ -494,6 +495,7 @@ def main() -> None:
         label = f"{name}-{arch}"
         transport = host.get("transport", "ssh")
         banner(f"HOST: {name}  ({transport})  ->  dist/{label}/")
+        _t0 = _time.monotonic()
         if transport == "local":
             ok = build_local(name, host, project_dir, build_py, label,
                              reserved, passthrough, pull, args.dry_run)
@@ -505,7 +507,7 @@ def main() -> None:
         else:
             warn(f"host '{name}': unknown transport '{transport}'; skipping.")
             ok = False
-        results.append((name, label, ok))
+        results.append((name, label, ok, _time.monotonic() - _t0))
 
     _package_linux(project_dir, results, args.dry_run)
 
@@ -513,8 +515,9 @@ def main() -> None:
     if not results:
         say("  No hosts built (none enabled / matched --only).")
         sys.exit(1)
-    for name, label, ok in results:
-        say(f"  {'OK  ' if ok else 'FAIL'}  {name:<10} -> dist/{label}/")
+    for name, label, ok, dur in results:
+        mm, ss = divmod(int(dur), 60)
+        say(f"  {'OK  ' if ok else 'FAIL'}  {name:<10} -> dist/{label}/   ({mm:d}m {ss:02d}s)")
     failed = [r for r in results if not r[2]]
     say("")
     sys.exit(1 if failed else 0)
