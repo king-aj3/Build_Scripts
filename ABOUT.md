@@ -4,8 +4,28 @@
 **Script version:** 1.11.0  (build.py)
 **Orchestrator:** build_all.py v1.2.2
 **Multi-project scheduler:** build_projects.py v1.2.0
+**Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
 **Date:** 2026-06-19
 **License:** Internal use
+
+## What's new — sync_projects.py v1.0.0 (multi-repo git sync)
+
+- **Compare local repos to GitHub and (safely) update them, in one command** —
+  instead of one-at-a-time in PyCharm. Selection: default = the
+  `build_projects.toml` set; `--project a,b`; `--all` (every git repo under the
+  workspace, including projects not in the build list).
+- **Safe by default.** No verb = a read-only `fetch` + per-repo status table
+  (branch, ahead/behind, dirty, untracked, shallow/lfs/submodule flags); zero
+  working-tree mutation. The only mutating verb is `--pull`, which is
+  **fast-forward-only**, **refuses a dirty tree**, **skips ahead/diverged/
+  detached/shallow** repos with a reason, and **confirms per-repo** (showing the
+  incoming commits) unless `--yes`. No push/commit/merge in v1; no `--force`
+  anywhere. `--dry-run` previews; `--non-interactive` for CI.
+- **Shared modules.** New `gitutil.py` (one git subprocess chokepoint, read-only
+  queries + FF-only pull, GCM-hardened network ops, no force/reset surface) and
+  `projutil.py` (project selection + `build_projects.toml` CRUD, now shared with
+  `build_projects.py` so the two tools agree on what a "project" is). `build.py`
+  / `build_all.py` are intended to wire into `gitutil` next (deferred).
 
 ## What's new in build_projects.py v1.2.0
 

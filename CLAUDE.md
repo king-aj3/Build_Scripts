@@ -1,15 +1,16 @@
 # Build_Scripts
 
-**What it is.** Shared Nuitka build tooling used across ALL the user's PyCharm projects. A single `build.py` compiles *any* project to a native executable (invoked from PyCharm External Tools or CLI); `build_all.py` orchestrates the same `build.py` across Windows/Linux/macOS hosts. Config-driven via `build_config.toml` or `pyproject [tool.nuitka_builder]`, else pure auto-detection.
+**What it is.** Shared Nuitka build tooling used across ALL the user's PyCharm projects. A single `build.py` compiles *any* project to a native executable (invoked from PyCharm External Tools or CLI); `build_all.py` orchestrates the same `build.py` across Windows/Linux/macOS hosts. `sync_projects.py` keeps the local repos in step with GitHub. Config-driven via `build_config.toml` or `pyproject [tool.nuitka_builder]`, else pure auto-detection.
 
-**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.2.0 (per ABOUT.md, 2026-06-19).
+**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.2.0, sync_projects.py v1.0.0 (per ABOUT.md, 2026-06-19).
 
 ## Stack & layout
 - Python 3.11+ host (stdlib `tomllib`; `tomli` fallback on 3.10). No third-party deps — no requirements.txt.
-- Entry points: `build.py` (per-machine build brain), `build_all.py` (cross-OS orchestrator for ONE project), and `build_projects.py` (schedules MANY projects × OSes, per-OS concurrency lanes; calls `build_all.py --only <host>` per job).
+- Entry points: `build.py` (per-machine build brain), `build_all.py` (cross-OS orchestrator for ONE project), `build_projects.py` (schedules MANY projects × OSes; calls `build_all.py --only <host>` per job), and `sync_projects.py` (multi-repo git status + safe fast-forward update).
+- Shared modules (stdlib-only, imported by the scripts above — same dir): `gitutil.py` (the safe git layer — one subprocess chokepoint, read-only queries, FF-only pull; no force/reset surface), `projutil.py` (project selection + `build_projects.toml` CRUD, shared by build_projects.py and sync_projects.py).
 - `examples/` — per-project `build_config.*.toml`, `build_config.template.toml`, `macos-build.yml` (GitHub Actions arm64).
 - `build_hosts.template.toml` (repo root) — host-map template for `build_all.py`.
-- `build_projects.toml` (repo root) — default project list for `build_projects.py` (no-args build set; add a project = one line).
+- `build_projects.toml` (repo root) — default project list for `build_projects.py` AND the default sync set for `sync_projects.py` (add a project = one line, or `build_projects.py --add-project`).
 - Build/dist: artifacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the **target** project, never here. Default `--onefile`; per-OS outputs in `dist/<os>-<arch>/`.
 
 ## How to run / build / test
@@ -35,8 +36,14 @@ python build_projects.py --only linux --dry-run   # preview a Linux-only run
 python build_projects.py ../ajj3-brain            # specific project(s) instead of the default list
 python build_projects.py --list-projects          # show the default set
 python build_projects.py --add-project NewProj    # add to the default set (or --remove-project)
+
+# Keep local repos in step with GitHub (safe: no verb = read-only status)
+python sync_projects.py                            # status of the build-list set (fetch + table)
+python sync_projects.py --all                      # status of EVERY git repo under the workspace
+python sync_projects.py --pull --dry-run           # preview fast-forwards; mutate nothing
+python sync_projects.py --pull                     # ff-only pull of clean+behind repos (per-repo confirm)
 ```
-No unit-test suite in this repo; `build.py --test`/`--audit` against a real project is the smoke check.
+No unit-test suite in this repo; `build.py --test`/`--audit` against a real project is the smoke check. `sync_projects.py` is validated against throwaway scratch repos (behind/dirty/diverged cases).
 
 ## Conventions (match existing code)
 - `from __future__ import annotations`; stdlib only; module-level version constants (`SCRIPT_VERSION`, `ORCH_VERSION`).

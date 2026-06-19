@@ -704,3 +704,36 @@ three. Do it once per project. Ordered so each step's failure is obvious.
 | **First** checkout OK, **second** Bad credentials | The `BUILD_SCRIPTS_TOKEN` secret in *that* repo is bad — re-set it with the verified PAT (step 3). |
 | `404` from `gh secret set`                    | Wrong repo name — `gh repo list king-aj3` for the exact one. |
 | `error connecting to *.blob.core.windows.net` | Transient; auto-retried. Not the firewall (Mint `ufw` allows outbound). |
+
+## 12. Keeping local repos in step with GitHub (`sync_projects.py`)
+
+`build_*` tools compile; `sync_projects.py` keeps your local clones current with
+their GitHub `origin` — across many repos at once, instead of one-at-a-time in
+PyCharm. It is deliberately conservative: it will not lose uncommitted work.
+
+```bash
+python <Build_Scripts>/sync_projects.py             # status of the build-list set (read-only)
+python <Build_Scripts>/sync_projects.py --all       # status of EVERY git repo under the workspace
+python <Build_Scripts>/sync_projects.py --all --diff # also show the commits you're missing
+python <Build_Scripts>/sync_projects.py --all --pull --dry-run  # preview the fast-forwards
+python <Build_Scripts>/sync_projects.py --all --pull            # fast-forward clean+behind repos
+```
+
+**What it does and won't do:**
+
+- **No verb = read-only.** It `fetch`es and prints a per-repo table (branch,
+  ahead/behind, dirty, untracked, and `shallow`/`lfs`/`submodule` flags). Nothing
+  in your working trees changes.
+- **`--pull` is fast-forward-only.** It updates a repo *only* when it is **clean
+  and strictly behind** origin — the safe case. It shows the incoming commits and
+  asks per repo (skip the prompt with `--yes`). Git itself refuses any non-
+  fast-forward, so it can't create merge commits or rewrite history.
+- **It refuses to touch a dirty tree** and **skips** ahead / diverged / detached /
+  no-upstream / shallow repos, telling you why. Resolve those in PyCharm
+  (commit, stash, merge, push) and re-run.
+- **Not in v1:** push, commit, and non-fast-forward merge. Those are the
+  dangerous operations and are deferred (see PROJECT_MEMORY "Open items").
+
+Selection mirrors `build_projects.py`: default = the `build_projects.toml` set,
+`--project a,b` for specific repos (bare name = sibling dir), `--all` for every
+git repo under the workspace (including ones not in the build list).

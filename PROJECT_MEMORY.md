@@ -654,8 +654,55 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
 
 ---
 
+## sync_projects.py: why safe-by-default + FF-pull-only (v1.0.0)
+
+A "sync all my repos" tool is the most dangerous in the set — it mutates working
+trees across ~14 repos, so a bad default can destroy uncommitted work in a
+project you weren't even thinking about. Design decisions and their reasons:
+
+- **No verb = read-only.** With no flags it only fetches and prints a status
+  table. An accidental or fat-fingered `sync_projects.py` literally cannot
+  mutate a tree. This is also ~all the day-to-day value (the repos are usually
+  clean and just need a status check).
+- **`--pull` is fast-forward-ONLY.** `git pull --ff-only` refuses anything that
+  isn't a clean fast-forward, so it can never create a merge commit or rewrite
+  history. "Update local from GitHub" *is* a fast-forward when you haven't
+  diverged — which is the normal case.
+- **Never touch a dirty tree.** A behind+dirty repo is refused (commit/stash in
+  PyCharm first). Untracked files do NOT count as dirty — a fast-forward is safe
+  over them — but staged/unstaged tracked changes do.
+- **ahead/diverged/detached/shallow → skip with a reason.** These need human
+  judgement (push, merge, rebase, unshallow); the tool reports, never guesses.
+- **No `--force`/reset/stash/commit surface exists in `gitutil.py` at all.** The
+  data-loss vectors from the design survey are unreachable from any caller, not
+  merely avoided by convention. The only mutating function is `pull_ff_only`.
+- **v1 scope = status + ff-pull.** Push/commit/non-FF-merge are deferred: they're
+  the dangerous paths AND can't be validated today (every repo is clean/synced,
+  so there's no real dirty/ahead/diverged state to test against). Add them later
+  against a deliberately-dirty scratch repo. Validated v1 against /tmp scratch
+  repos covering behind / behind+dirty / diverged.
+- **Shared, not duplicated.** `gitutil.py` (git layer) and `projutil.py`
+  (selection + TOML CRUD, extracted from build_projects.py with byte-identical
+  behavior) are the chosen architecture so build.py/build_all.py can later wire
+  into the same audited git code. Design from a 7-agent analysis; the code
+  passed a 3-lens adversarial review (safety / correctness / integration).
+
+---
+
 ## Open items / future work
 
+- **[ROADMAP] sync_projects.py — wire build scripts into gitutil + add write
+  verbs.** Two deferred follow-ups: (1) refactor `build.py`'s
+  `report_repo_freshness` and `build_all.py`'s `git pull --ff-only` to call
+  `gitutil.py` (the shared git layer) — pure-DRY, but touches two production
+  files, so gate each with the smoke check (`build.py --audit/--test`,
+  `build_all.py --dry-run`) and a back-compat seam. (2) Add the gated write
+  verbs to sync — `--push` (clean+ahead, re-confirm branch, never `--force`,
+  report+leave-untouched on auth failure), then `--commit MSG` (tracked-only,
+  message required) and `--merge` (explicit, per-repo confirm, never auto-resolve
+  diverged). Build each against a deliberately dirty/ahead/diverged scratch repo
+  since the live repos are all clean. Also: detect-and-warn for LFS (ShooterGame)
+  and shallow; submodules are not auto-updated.
 - **[DONE 2026-06-13] Three-OS release via `build_all.py` — all 3 projects ×
   3 OSes building green.** macOS via github transport (arm64), Windows via SSH
   to the guest VM (native MSVC), Linux local + auto tar.gz. Verified builds:
@@ -764,6 +811,18 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — sync_projects.py v1.0.0 (NEW) + gitutil.py v1.0.0 + projutil.py
+  (NEW shared modules). Multi-repo git status + safe fast-forward update across
+  the project repos. Safe by default (no verb = read-only fetch+status; only
+  `--pull` mutates, and it is FF-only, refuses dirty trees, skips ahead/diverged/
+  detached/shallow, confirms per-repo). gitutil.py is the shared git layer (one
+  `_git` chokepoint, read-only API + `pull_ff_only`, GCM-hardened network ops,
+  NO force/reset surface). projutil.py lifts build_projects.py's selection +
+  TOML-CRUD helpers; build_projects.py now imports them (aliased, byte-identical
+  behavior, regression-checked). Design chosen from a 7-agent analysis + a
+  3-lens adversarial review; rationale below. v1 scope = status + ff-pull only
+  (push/commit/merge deferred — all repos are clean/synced so those paths can't
+  be exercised yet). build.py/build_all.py wire-into-gitutil is deferred.
 - 2026-06-19 — build_projects.py v1.2.0: manage the default list from the CLI
   (`--list-projects` / `--add-project NAME ...` / `--remove-project NAME ...`)
   instead of hand-editing build_projects.toml. Bare name = sibling dir; dedup by

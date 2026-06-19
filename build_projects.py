@@ -65,9 +65,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
-import os
 import platform
-import re
 import subprocess
 import sys
 import threading
@@ -82,6 +80,17 @@ except ImportError:                  # pragma: no cover
         import tomli as _toml        # type: ignore
     except ImportError:
         _toml = None
+
+# Shared project-selection + build_projects.toml CRUD (aliased to the original
+# private names so call sites below are unchanged). Same dir as this script.
+from projutil import (
+    discover_projects, load_default_projects,
+    split_csv as _split_csv,
+    read_raw_projects as _read_raw_projects,
+    resolve_stored as _resolve_stored,
+    normalize_token as _normalize_token,
+    write_projects as _write_projects,
+)
 
 SCHED_VERSION = "1.2.0"
 
@@ -149,97 +158,10 @@ def enabled_hosts(project_dir: Path) -> list[str]:
     return enabled
 
 
-def discover_projects(root: Path) -> list[Path]:
-    """Every immediate child dir of `root` that contains a build_hosts.toml."""
-    found = []
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and (child / "build_hosts.toml").is_file():
-            found.append(child.resolve())
-    return found
-
-
-def load_default_projects(config_path: Path) -> list[Path]:
-    """Read the default project list from build_projects.toml (`projects = [...]`).
-
-    This is the "easy way to add a project": drop one line in build_projects.toml
-    and it builds by default (no args). Relative paths resolve against the config
-    file's directory; absolute paths are used as-is. Returns [] if absent.
-    """
-    if not config_path.is_file():
-        return []
-    if _toml is None:
-        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
-    with open(config_path, "rb") as fh:
-        cfg = _toml.load(fh)
-    base = config_path.resolve().parent
-    out = []
-    for entry in cfg.get("projects", []):
-        p = Path(entry).expanduser()
-        out.append((p if p.is_absolute() else base / p).resolve())
-    return out
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Project-list management (--list-projects / --add-project / --remove-project)
+#  Selection + build_projects.toml CRUD now live in projutil.py (imported above).
 # ─────────────────────────────────────────────────────────────────────────────
-def _split_csv(items: list[str]) -> list[str]:
-    """Flatten ['a,b', 'c'] -> ['a','b','c'] so `--add-project a,b c` works."""
-    return [x.strip() for tok in items for x in tok.split(",") if x.strip()]
-
-
-def _read_raw_projects(config_path: Path) -> list[str]:
-    """The `projects` array verbatim (stored strings, not resolved paths)."""
-    if not config_path.is_file():
-        return []
-    if _toml is None:
-        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
-    with open(config_path, "rb") as fh:
-        return [str(e) for e in _toml.load(fh).get("projects", [])]
-
-
-def _resolve_stored(entry: str, config_dir: Path) -> Path:
-    """How a stored entry resolves (relative entries are vs. the config dir)."""
-    p = Path(entry).expanduser()
-    return (p if p.is_absolute() else config_dir / p).resolve()
-
-
-def _normalize_token(token: str, config_dir: Path) -> tuple[Path, str]:
-    """A CLI token -> (abs_path, stored_form). A bare NAME is treated as a
-    sibling project dir (the workspace layout: projects live beside the config
-    dir's parent); a path is resolved against the CWD. The stored form is made
-    relative to the config dir when possible, matching the existing entries."""
-    token = token.strip()
-    p = Path(token).expanduser()
-    if ("/" in token) or (os.sep in token) or token.startswith(".") or p.is_absolute():
-        abs_path = (p if p.is_absolute() else Path.cwd() / p).resolve()
-    else:
-        abs_path = (config_dir.parent / token).resolve()   # bare name = sibling
-    try:
-        stored = Path(os.path.relpath(abs_path, config_dir)).as_posix()
-    except ValueError:                                     # different drive (Windows)
-        stored = str(abs_path)
-    return abs_path, stored
-
-
-def _write_projects(config_path: Path, entries: list[str]) -> None:
-    """Rewrite the `projects = [...]` array, preserving the file's comments.
-
-    stdlib has no TOML writer, but the array is simple: swap just that block and
-    leave the header untouched. A function replacement avoids re.sub treating
-    backslashes in stored paths as group references."""
-    block = "projects = [\n" + "".join(f'    "{e}",\n' for e in entries) + "]"
-    if config_path.is_file():
-        text = config_path.read_text(encoding="utf-8")
-        if re.search(r"(?ms)^projects\s*=\s*\[.*?\]", text):
-            text = re.sub(r"(?ms)^projects\s*=\s*\[.*?\]", lambda _m: block, text, count=1)
-        else:
-            text = text.rstrip() + "\n\n" + block + "\n"
-    else:
-        text = ("# build_projects.toml — default project list for build_projects.py\n\n"
-                + block + "\n")
-    config_path.write_text(text, encoding="utf-8")
-
-
 def cmd_list_projects(config_path: Path) -> None:
     config_dir = config_path.resolve().parent
     raw = _read_raw_projects(config_path)
@@ -460,6 +382,7 @@ def main() -> None:
             if not pd.is_dir():
                 die(f"project dir not found: {pd}")
             projects.append(pd)
+        projects = list(dict.fromkeys(projects))   # dedupe same dir given twice
     else:
         source = config_path.name
         projects = load_default_projects(config_path)

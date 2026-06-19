@@ -358,3 +358,49 @@ Actions does the compiling, so local cost is just polling).
 | More Linux overlap                     | `python build_projects.py ../A ../B ../C --linux-jobs 3`         |
 | Clean standalone across all            | `python build_projects.py ../A ../B -- --standalone --clean`     |
 | Preview the schedule                   | `python build_projects.py ../A ../B --dry-run`                   |
+
+## Multi-repo git sync (`sync_projects.py`)
+
+Compare each local project to its GitHub `origin` and (optionally) bring it up
+to date — across many repos at once, instead of one-at-a-time in PyCharm.
+
+```
+python sync_projects.py [selection] [verb] [safety]
+```
+
+**Safe by default:** with no verb it only `fetch`es and prints a status table
+(zero working-tree mutation). The one mutating verb, `--pull`, is
+**fast-forward-only**, **refuses a dirty tree**, **skips ahead/diverged/detached/
+shallow** repos, and **confirms per-repo** (showing the incoming commits) unless
+`--yes`. No push/commit/merge in v1; no `--force` anywhere.
+
+| Flag                  | Effect                                                       |
+| --------------------- | ------------------------------------------------------------ |
+| *(no selection)*      | The `build_projects.toml` set (shared with `build_projects.py`). |
+| `--project NAME ...`  | Only these repos (bare name = sibling dir, or a path; CSV ok).|
+| `--all`               | Every git repo under `--root` (includes projects NOT in the build list). |
+| `--root DIR`          | Workspace root for `--all` (default: parent of `build_projects.toml`). |
+| `--config PATH`       | `build_projects.toml` location (default: alongside the script).|
+| *(no verb)*           | **Read-only** status: fetch + per-repo table.                |
+| `--pull`              | Fast-forward-only pull of **clean + behind** repos (the only mutating verb). |
+| `--diff`              | In status, also print the incoming commit log for behind repos.|
+| `--no-fetch`          | Classify against already-cached remote refs (skip the fetch). |
+| `--dry-run`           | Preview only; never modify any working tree.                 |
+| `--yes` / `-y`        | Auto-confirm fast-forward pulls (no per-repo prompt).        |
+| `--non-interactive`   | Never prompt (CI); pulls happen only if `--yes` is also given.|
+
+### Recipes
+
+| Goal                                   | Command                                                  |
+| -------------------------------------- | -------------------------------------------------------- |
+| Status of the build-list set           | `python sync_projects.py`                                |
+| Status of EVERY repo                    | `python sync_projects.py --all`                          |
+| Status + show what's incoming           | `python sync_projects.py --all --diff`                   |
+| Preview fast-forwards (no changes)      | `python sync_projects.py --all --pull --dry-run`         |
+| Fast-forward all clean+behind repos     | `python sync_projects.py --all --pull`                   |
+| Unattended ff-pull (CI / no prompts)    | `python sync_projects.py --all --pull --yes --non-interactive` |
+| Just a couple repos                     | `python sync_projects.py --project ajj3-brain,WealthBuilder --pull` |
+
+A repo is only fast-forwarded when it's **clean and strictly behind**. Dirty,
+ahead, diverged, detached, no-upstream, and shallow repos are reported and
+skipped — fix those in PyCharm (commit/stash/merge) and re-run.
