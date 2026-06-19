@@ -23,18 +23,22 @@
 
 ## Current state
 - Branch: master. sync_projects.py v1 (status + ff-pull) built, tested, working.
-- **build_projects.py validated for real on Linux** — `--only linux` built all 3
-  (ajj3-brain/WealthBuilder/Thrift_Reseller) to valid ELF onefiles, 3/3 green,
-  lane-cap parallelism confirmed (~14m vs ~23m serial).
-- **build_all.py v1.2.3** — fixed the collector so packages don't nest prior
-  tarballs; cleaned + regenerated the 3 Linux packages.
+- **build_projects.py FULLY VALIDATED — full cross-OS run, 9/9 green** (2026-06-19):
+  all 3 projects × {linux local, windows via SSH-to-VM, macos via GitHub Actions}.
+  ~63m wall-clock vs ~148m if fully serial (~2.3x from lane parallelism). The
+  serial Windows lane is the critical path (~63m of job-time: ajj3 3m41 +
+  WealthBuilder 22m21 + Thrift 36m53). All 9 binaries verified in dist/<os-arch>/.
+- **Swap headroom held trivially** — peak 189 MiB of 31 GiB used during the
+  heaviest concurrent load (2 Linux Nuitka + Windows VM compiling + 3 macOS).
+- **build_all.py v1.2.3** — collector no longer nests prior tarballs.
+- Host: 64GB RAM, swap now 32 GiB, vm.swappiness=10.
 
 ## Next task (the ONE thing)
-- **Full cross-OS `build_projects.py` run** — the Linux-only pass is DONE (3/3
-  green, ~14m). Next: drop `--only linux` (`python build_projects.py`) to also
-  build Windows (SSH to the VM, serial) + macOS (GitHub Actions). Confirm the VM
-  is reachable and `gh` is authed first; this is the first real Windows+macOS
-  fan-out via the scheduler.
+- **Nothing pressing — the build + sync toolchain is complete and validated.**
+  Optional enhancement tied to the planned extra VMs: a SECOND Windows build VM
+  would let `build_projects.py` raise the windows lane cap to 2 and halve the
+  critical path (Windows is the bottleneck because it's one serial VM). The 32GiB
+  swap headroom already supports running more VMs concurrently.
 
 ## Open questions / blockers
 - **sync write verbs (`--push`/`--commit`/`--merge`) are PARKED by decision
@@ -48,5 +52,6 @@ python sync_projects.py                       # status of the build-list set (re
 python sync_projects.py --all                 # status of every git repo
 python sync_projects.py --all --pull --dry-run  # preview fast-forwards
 python build_projects.py --list-projects      # the default build/sync set
-python build_projects.py --only linux         # first real cross-OS build (Linux)
+python build_projects.py --only linux         # Linux-only (fast, ~14m)
+python build_projects.py                       # FULL cross-OS (all 3 OSes, ~63m; Windows is the long pole)
 ```

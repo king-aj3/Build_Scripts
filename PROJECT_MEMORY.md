@@ -814,6 +814,15 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — MILESTONE: first full cross-OS `build_projects.py` run, **9/9 green**.
+  3 projects × {linux local, windows via SSH-to-VM (serial), macos via GitHub
+  Actions (parallel)}. ~63m wall-clock vs ~148m fully serial (~2.3x from lane
+  parallelism); the serial Windows lane is the critical path (one shared VM:
+  ajj3 3m41 + WB 22m21 + Thrift 36m53 = ~63m). All 9 binaries verified in
+  dist/<os-arch>/. Swap held at 189MiB/31GiB peak under the heaviest concurrent
+  load. NOTE: a 2nd Windows build VM would let windows lane cap go to 2 and ~halve
+  the critical path — the obvious next throughput win (the 32GiB swap already
+  supports more concurrent VMs).
 - 2026-06-19 — build_all.py v1.2.3: artifact collector now skips `*.tar.gz`.
   Was sweeping the previous run's auto-package (`dist/<project>-<label>.tar.gz`)
   into `dist/<label>/`, which `_package_linux` then re-tarred — nesting the old
