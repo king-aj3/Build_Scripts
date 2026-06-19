@@ -676,11 +676,11 @@ project you weren't even thinking about. Design decisions and their reasons:
 - **No `--force`/reset/stash/commit surface exists in `gitutil.py` at all.** The
   data-loss vectors from the design survey are unreachable from any caller, not
   merely avoided by convention. The only mutating function is `pull_ff_only`.
-- **v1 scope = status + ff-pull.** Push/commit/non-FF-merge are deferred: they're
-  the dangerous paths AND can't be validated today (every repo is clean/synced,
-  so there's no real dirty/ahead/diverged state to test against). Add them later
-  against a deliberately-dirty scratch repo. Validated v1 against /tmp scratch
-  repos covering behind / behind+dirty / diverged.
+- **v1 scope = status + ff-pull. Push/commit/non-FF-merge are PARKED (decided
+  2026-06-19), not just deferred.** The owner confirmed pull/ff-only is all
+  that's wanted — the dangerous verbs aren't worth the marginal benefit, so
+  status + ff-pull is the intended FINAL shape unless that changes. Validated v1
+  against /tmp scratch repos covering behind / behind+dirty / diverged.
 - **Shared, not duplicated.** `gitutil.py` (git layer) and `projutil.py`
   (selection + TOML CRUD, extracted from build_projects.py with byte-identical
   behavior) are the chosen architecture so build.py/build_all.py can later wire
@@ -698,12 +698,14 @@ project you weren't even thinking about. Design decisions and their reasons:
   inline: it's one `git pull --ff-only` inside the `run()`/dry-run wrapper, and
   routing it through gitutil would add GCM hardening + change logging/error
   handling — a behavior change for a 1-line gain on a fragile file. Revisit only
-  if build_all grows more git needs. (2) Add the gated write verbs to sync — `--push` (clean+ahead, re-confirm branch, never `--force`,
-  report+leave-untouched on auth failure), then `--commit MSG` (tracked-only,
-  message required) and `--merge` (explicit, per-repo confirm, never auto-resolve
-  diverged). Build each against a deliberately dirty/ahead/diverged scratch repo
-  since the live repos are all clean. Also: detect-and-warn for LFS (ShooterGame)
-  and shallow; submodules are not auto-updated.
+  if build_all grows more git needs. (2) **[PARKED — by decision 2026-06-19]**
+  the gated write verbs (`--push`/`--commit`/`--merge`) — the owner confirmed
+  pull/ff-only is the intended final shape; don't build these unless asked. If
+  un-parked: `--push` (clean+ahead, re-confirm branch, never `--force`,
+  report+leave-untouched on auth failure), `--commit MSG` (tracked-only, message
+  required), `--merge` (explicit per-repo confirm, never auto-resolve diverged);
+  build each against a dirty/ahead/diverged scratch repo, LFS/shallow detect-and-
+  warn, submodules not auto-updated.
 - **[DONE 2026-06-13] Three-OS release via `build_all.py` — all 3 projects ×
   3 OSes building green.** macOS via github transport (arm64), Windows via SSH
   to the guest VM (native MSVC), Linux local + auto tar.gz. Verified builds:

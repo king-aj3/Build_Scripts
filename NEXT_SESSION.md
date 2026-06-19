@@ -27,18 +27,15 @@
   after the projutil extraction.
 
 ## Next task (the ONE thing)
-- **sync write verbs** (`--push`, then `--commit MSG` / `--merge`) — goes BEYOND
-  the chosen v1 scope (status + ff-pull), so confirm with me first. Build each
-  against a deliberately dirty/ahead/diverged /tmp scratch repo since the live
-  repos are all clean. `--push`: clean+ahead only, re-confirm branch, never
-  `--force`, report-and-leave-untouched on auth failure.
+- **First real `build_projects.py` multi-OS build** (Linux-first as the safe
+  validation): `python build_projects.py --only linux`, then drop `--only linux`
+  for the full cross-OS run. Still unrun.
 
 ## Open questions / blockers
-- sync write verbs (`--push`/`--commit`/`--merge`) are deferred — build them
-  against a deliberately dirty/ahead/diverged scratch repo (live repos are clean,
-  so those paths can't be exercised). See PROJECT_MEMORY "Open items".
-- The first real `build_projects.py` multi-project build is still unrun (Linux-
-  only first): `python build_projects.py --only linux`.
+- **sync write verbs (`--push`/`--commit`/`--merge`) are PARKED by decision
+  (2026-06-19).** The owner confirmed pull/ff-only is all that's wanted; commit/
+  push/merge are too dangerous for the marginal benefit. Don't build them unless
+  asked. Status + ff-pull is the intended final shape of sync_projects.py.
 
 ## Resume commands
 ```
