@@ -168,6 +168,48 @@ manual step; the benefit is no surprise bundle size jumps.
 
 ---
 
+## Why the build gates on broken entry/assets but only warns on drift (v1.11.0)
+
+`--audit` is opt-in, so a forgotten run can still ship a broken binary. v1.11.0
+adds an automatic **pre-build gate** (`preflight_gate`) that runs right before
+Nuitka and *blocks* — but only on the two failures that make the artifact
+genuinely worthless:
+
+- **Missing entry point** — Nuitka can't compile a file that isn't there; the
+  build would fail anyway, just 30 seconds of env-setup later.
+- **Declared `data_files`/`data_dirs` not on disk** — the compile *succeeds* but
+  silently ships a binary missing an asset. A restructure that moves a folder is
+  the classic cause; far better to stop than to discover it at runtime.
+
+Everything else `audit()` flags stays a **warning, not a block**: version drift
+is cosmetic metadata, and unbundled-asset *suggestions* are guesses (the
+read-only-audit reasoning above — don't act on them automatically). Blocking on
+those would turn a nuisance into a wall. `--force` bypasses the gate for the
+rare case you know better. This deliberately does NOT catch compile failures —
+it's a static config/bundle check, not a build. The matching scheduler
+(`build_projects.py`) gets the gate for free because every job is a `build.py`
+invocation.
+
+Why the gate reuses `--force` (already an `--init` flag) rather than a new
+`--no-gate`: `--force` already means "I know what I'm doing, override the
+guardrail," and `--init` and a build are different invocations, so there's no
+collision. One fewer flag to remember.
+
+---
+
+## Why repo-freshness is report-only on direct `build.py` (v1.11.0)
+
+`build.py` now does a read-only `git fetch` and reports `N commits behind
+origin/<branch>` before building — but it never pulls. `build_all.py` already
+owns pulling (it's the only layer that can pull the *remote* Windows/macOS
+trees too), and during hand-testing an auto-pull on the local tree would
+silently change what you're compiling out from under you. A fetch updates only
+remote-tracking refs (not the working tree), is bounded + non-fatal (offline or
+auth-less just skips), so it informs without surprising. Pulling stays a
+deliberate act, not a build side effect.
+
+---
+
 ## Why `--init` does only safe-to-detect things
 
 The `--init` command auto-fills only what can be inferred reliably:
@@ -635,25 +677,27 @@ for a clean slate. build_all.py is unaffected (it never runs --init/--reset).
   - Remote `git pull` over ssh fails on GCM (`--no-pull` to skip); VM builds
     its current working tree. Set up a PAT in the VM's git store if unattended
     private-repo pulls are wanted.
-- **[ROADMAP] Parallel build-matrix mode (project × OS aware).** Today
-  `build_all.py` is sequential across hosts within one project, and there's
-  no coordination *across* projects — running two `build_all.py` invocations
-  at once would collide on the shared Windows VM. A future top-level mode
-  could parallelize intelligently by where the work runs:
-  - **macOS: fully parallel.** Each GitHub runner is a separate cloud VM;
-    fire all dispatches at once (bounded by the plan's concurrent-job limit,
-    ~5 on Pro). Strongest win — N projects' macOS builds in ~one build's time.
-  - **Linux: RAM-bounded parallelism.** All run on this one Threadripper
-    (64 GB). Cap concurrency by RAM, not cores — `_safe_jobs()` already
-    throttles per-build job count, but N concurrent Nuitka builds still
-    multiply peak RAM; ~2 at a time is the realistic ceiling.
-  - **Windows: strictly serial behind a lock.** One VM, one `py -3.12`,
-    shared CPU/RAM — the genuine long pole. Needs a cross-process lock so
-    multiple project builds queue instead of colliding.
-  Design task, not trivial: needs a scheduler/lock layer above the current
-  per-project host loop. The natural shape is "dispatch all macOS, run Linux
-  with a small pool, serialize Windows," with Windows as the critical path
-  everything else finishes before.
+- **[DONE 2026-06-19] Parallel build-matrix mode (project × OS aware) —
+  `build_projects.py` v1.0.0.** A scheduler layer above `build_all.py`: each
+  `(project × OS)` job runs as `build_all.py <project> --only <host>`, so the
+  audit gate, git pull, and per-OS artifact paths are inherited unchanged. Jobs
+  are scheduled by OS lane (one thread-pool per host, sized to that host's cap)
+  — exactly the "dispatch all macOS, run Linux with a small pool, serialize
+  Windows" shape this item called for:
+  - **macOS: fully parallel** (`--mac-jobs`, default #projects). Each GitHub
+    runner is a separate cloud VM; local cost is just `gh run watch` polling,
+    so N projects' macOS builds finish in ~one build's time.
+  - **Linux: RAM-bounded** (`--linux-jobs`, default 2). One Threadripper; LTO
+    multiplies peak RAM, so concurrency is capped + tunable, not core-bound.
+  - **Windows: strictly serial** (lane cap hard-wired to 1). One shared VM —
+    concurrent compiles OOM — so every Windows job queues behind one lane, even
+    across projects. The genuine long pole; everything else finishes before it.
+  `--sequential` runs one job at a time (streams live); `--parallel` (default)
+  captures each to `build-logs/<project>-<host>.log`. The cross-process *lock*
+  this item worried about turned out unnecessary: a single scheduler process
+  owns all lanes, so the Windows cap-1 thread-pool IS the serialization. (Two
+  separate `build_projects.py` runs launched at once could still collide on the
+  VM — documented, not guarded.)
 - **PyInstaller backend (fallback).** v1.8.0's bytecode-mode handling
   for pymupdf is confirmed working, so this is no longer the imminent
   next step. It remains the documented escape if a future package proves
@@ -720,6 +764,21 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build_projects.py v1.0.0 (NEW): multi-project scheduler above
+  `build_all.py`. Builds N projects across their OS hosts, scheduling
+  `(project × OS)` jobs by OS lane with per-host concurrency caps — windows=1
+  (shared VM OOMs on concurrent compiles, serial even across projects),
+  linux=`--linux-jobs` (default 2), macos=`--mac-jobs` (default #projects).
+  `--parallel`/`--sequential`, `--only`, `--all --root`, `--dry-run`, `--`
+  passthrough. Implements the long-standing "parallel build-matrix" roadmap
+  item; no lock needed (one scheduler owns all lanes). `build_all.py` untouched.
+- 2026-06-19 — build.py v1.11.0: pre-build gate + repo-freshness report.
+  `preflight_gate()` blocks a build on a missing entry point or declared
+  `data_files`/`data_dirs` not on disk (exits before the compile); version
+  drift / unbundled hints stay warnings; `--force` bypasses. `report_repo_
+  freshness()` does a read-only, bounded `git fetch` and reports `N behind
+  origin/<branch>` — never modifies the tree (pulling stays build_all's job).
+  Rationale recorded above ("Why the build gates…", "Why repo-freshness…").
 - 2026-06-13 — build_all.py v1.2.2: Windows SSH host fixes. (1) Copy-back
   probed only the local side for rsync via `shutil.which`, so a Linux
   orchestrator always picked rsync even though Windows hosts have none — the

@@ -33,7 +33,7 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | --------------------- | ------------------------------------------------------------ |
 | `--init`              | Generate `build_config.toml` from project introspection.     |
 | `--target=pyproject`  | (with `--init`) Append to `pyproject.toml` instead.          |
-| `--force`             | (with `--init`) Overwrite, **preserving** curated values (entry, data_dirs, data_files, include_qt_plugins). |
+| `--force`             | (with `--init`) Overwrite, **preserving** curated values (entry, data_dirs, data_files, include_qt_plugins). (with a build) **Bypass the pre-build gate** and compile despite blocking issues. |
 | `--reset`             | (with `--init`) Regenerate config **from scratch**, ignoring the existing file. No preservation. |
 
 > `--init`/`--reset` set `include_qt_plugins` to `"sensible"`. That set already bundles the Qt `printsupport` family wherever Qt ships it (so `QtPrintSupport` printing keeps working) — naming it explicitly is redundant and FATALs on Qt 6.11+, which removed the standalone family. Never `"all"` (its qml plugins break the Linux build). A real QML app sets `"sensible,qml"`/`"all"` by hand; `--force` preserves that, `--reset` resets it. At build time a stale `,printsupport` carried over from a pre-1.8.7 config is stripped automatically.
@@ -52,6 +52,20 @@ PyCharm's `$ProjectFileDir$` macro is the recommended value.
 | --------------- | ------------------------------------------------------- |
 | `--jobs N`      | Parallel C compile jobs. Default: RAM-aware cap (~1.5 GB per LTO job, 4 GB headroom, max 32) so high-core / modest-RAM machines do not OOM. An explicit value is honored as-is. |
 | `--python PATH` | Force a specific interpreter (overrides auto-discovery).|
+
+## Pre-build checks (automatic, since v1.11.0)
+
+Every build runs two checks before Nuitka starts:
+
+- **Repo-freshness report** — a read-only `git fetch` (bounded, non-fatal),
+  then a line telling you if the tree is `N commits behind origin/<branch>`.
+  Report-only: it never modifies your working tree. (Actually *pulling* is
+  `build_all.py`'s job.)
+- **Pre-build gate** — refuses to compile a binary that's already broken:
+  a **missing entry point**, or a declared `data_files`/`data_dirs` path that
+  isn't on disk. It exits *before* the compile so you don't waste 5–15 min.
+  Version drift and unbundled-asset hints stay warnings. **`--force` bypasses
+  the gate.**
 
 ## Common recipes
 
@@ -287,3 +301,45 @@ and run `gh auth login` once (`gh auth status` to verify). The workflow file
 must exist in the project repo at `.github/workflows/macos-build.yml`
 (copy from `examples/macos-build.yml`); a failed run can be inspected with
 `gh run view <id> -R OWNER/REPO --log`.
+
+## Multi-project scheduler (`build_projects.py`)
+
+Builds **several projects** across their OS hosts in one command. Each
+`(project × OS)` job runs as `build_all.py <project> --only <host>`, so the
+audit gate, git pull, freshness, and per-OS artifact paths are all inherited.
+Jobs are scheduled by **OS lane**, each with its own concurrency cap, so
+independent work overlaps while shared, RAM-limited hosts stay serial.
+
+```
+python build_projects.py PROJ [PROJ ...] [options] [-- build.py-flags]
+```
+
+| Flag                     | Effect                                                       |
+| ------------------------ | ------------------------------------------------------------ |
+| `--parallel`             | **Default.** Overlap jobs by lane; capture each to `build-logs/<project>-<host>.log`. |
+| `--sequential`           | Run strictly one job at a time, streaming each build live.   |
+| `--only A,B`             | Restrict to these OS hosts (e.g. `--only linux,macos`).      |
+| `--linux-jobs N`         | Max concurrent **Linux** builds (default 2).                 |
+| `--mac-jobs N`           | Max concurrent **macOS** builds (default: # of projects).    |
+| `--all --root DIR`       | Discover every dir under `DIR` that has a `build_hosts.toml`.|
+| `--build-all PATH`       | Path to `build_all.py` (default: alongside this script).     |
+| `--log-dir DIR`          | Per-job logs in parallel mode (default: `./build-logs`).     |
+| `--dry-run`              | Print the schedule; build nothing.                           |
+| `-- ...`                 | Everything after `--` is forwarded to `build_all.py` → `build.py`. |
+
+**Why lanes.** `windows = 1` (the shared build VM OOMs on concurrent compiles —
+serial **even across projects**), `linux = --linux-jobs` (this box has the
+cores; LTO eats RAM, so it's capped + tunable), `macos = --mac-jobs` (GitHub
+Actions does the compiling, so local cost is just polling).
+
+### Recipes
+
+| Goal                                   | Command                                                          |
+| -------------------------------------- | ---------------------------------------------------------------- |
+| Build 3 projects, all OSes, parallel   | `python build_projects.py ../ajj3-brain ../WealthBuilder ../Thrift_Reseller` |
+| Discover & build everything            | `python build_projects.py --all --root ..`                       |
+| Linux only (safe first real run)       | `python build_projects.py ../A ../B ../C --only linux`           |
+| One at a time, live output             | `python build_projects.py ../A ../B --sequential`                |
+| More Linux overlap                     | `python build_projects.py ../A ../B ../C --linux-jobs 3`         |
+| Clean standalone across all            | `python build_projects.py ../A ../B -- --standalone --clean`     |
+| Preview the schedule                   | `python build_projects.py ../A ../B --dry-run`                   |

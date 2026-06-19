@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.10.0"
+SCRIPT_VERSION    = "1.11.0"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -2072,6 +2072,93 @@ def preflight_warn(project_dir: Path, cfg: Config) -> None:
         say("        copy-paste fixes. (Warning only -- the build continues.)")
 
 
+def report_repo_freshness(project_dir: Path) -> None:
+    """Report-only Git freshness check -- NEVER modifies the working tree.
+
+    If project_dir is a Git repo with an upstream, do a read-only `git fetch`
+    (updates remote-tracking refs, not your files) and report how many commits
+    HEAD is behind/ahead. Bounded + non-fatal: a slow/offline/auth-less remote
+    just skips the report. Actually *pulling* stays build_all.py's job; this
+    only warns you when you're about to build a stale tree.
+    """
+    if not (project_dir / ".git").exists():
+        return
+
+    def _git(*a, timeout=15):
+        try:
+            return subprocess.run(["git", "-C", str(project_dir), *a],
+                                  capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    up = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", timeout=5)
+    if not up or up.returncode != 0 or not up.stdout.strip():
+        return                              # detached HEAD or no upstream -- skip
+    upstream = up.stdout.strip()
+    _git("fetch", "--quiet", timeout=15)    # read-only; non-fatal if it fails
+    counts = _git("rev-list", "--left-right", "--count", f"HEAD...{upstream}", timeout=5)
+    if not counts or counts.returncode != 0:
+        return
+    try:
+        ahead, behind = (int(x) for x in counts.stdout.split())
+    except ValueError:
+        return
+
+    step("Repo freshness")
+    if behind == 0 and ahead == 0:
+        info(f"Up to date with {upstream}.")
+    elif behind:
+        warn(f"{behind} commit(s) BEHIND {upstream}"
+             + (f" (and {ahead} ahead)" if ahead else "")
+             + " -- consider `git pull` (build_all.py pulls automatically).")
+    else:
+        info(f"{ahead} commit(s) ahead of {upstream}; not behind.")
+
+
+def preflight_gate(project_dir: Path, cfg: Config, force: bool) -> bool:
+    """Hard pre-build gate: refuse to compile a binary that's already broken.
+
+    BLOCKS on (a) a missing entry point -- Nuitka can't compile a file that is
+    not there -- and (b) declared data_files/data_dirs not on disk, which would
+    silently ship an incomplete binary. Returns True to proceed. Version drift
+    and unbundled-asset suggestions are NOT blocking (--audit / preflight_warn
+    surface those). `force` (--force) overrides the gate and builds anyway.
+    """
+    blockers: list[str] = []
+
+    if not (project_dir / cfg.entry).is_file():
+        blockers.append(f"entry point missing: {cfg.entry}")
+
+    for e in cfg.data_files:
+        if isinstance(e, (list, tuple)) and len(e) == 2:
+            if not (project_dir / e[0]).is_file():
+                blockers.append(f"declared data_file not on disk: {e[0]}")
+        else:
+            blockers.append(f"malformed data_files entry: {e!r}")
+
+    for e in cfg.data_dirs:
+        p = e if isinstance(e, str) else (e[0] if e else "")
+        if not p:
+            blockers.append(f"malformed data_dirs entry: {e!r}")
+        elif not (project_dir / p).is_dir():
+            blockers.append(f"declared data_dir not on disk: {p}")
+
+    if not blockers:
+        return True
+
+    banner("Pre-build gate: blocking issues")
+    for b in blockers:
+        error(b)
+    say("")
+    if force:
+        warn(f"{len(blockers)} blocking issue(s) -- proceeding anyway (--force).")
+        return True
+    error(f"Refusing to build: {len(blockers)} blocking issue(s).")
+    say("        Fix them, run `--audit` for copy-paste fixes, or pass --force "
+        "to override.")
+    return False
+
+
 def show_info(project_dir: Path, cfg: Config):
     banner("Build script info")
     say(f"  build.py version : {SCRIPT_VERSION}")
@@ -2200,9 +2287,10 @@ def main():
                         help="Where --init writes (default: pyproject.toml "
                              "[tool.nuitka_builder] -- the recommended single source)")
     parser.add_argument("--force",      action="store_true",
-                        help="Overwrite existing config (use with --init). "
-                             "Curated values (entry, data_dirs, data_files, "
-                             "include_qt_plugins) are preserved.")
+                        help="With --init: overwrite existing config (curated "
+                             "entry, data_dirs, data_files, include_qt_plugins "
+                             "are preserved). With a build: bypass the pre-build "
+                             "gate and compile despite blocking issues.")
     parser.add_argument("--reset",      action="store_true",
                         help="With --init: regenerate config FROM SCRATCH, "
                              "ignoring the existing file entirely (no "
@@ -2283,7 +2371,10 @@ def main():
             say(f"  Python: {vp}")
         return
 
-    preflight_warn(project_dir, cfg)          # surface restructure/bundling gaps
+    report_repo_freshness(project_dir)        # report-only: warn if tree is stale
+    preflight_warn(project_dir, cfg)          # soft warnings: bundling gaps
+    if not preflight_gate(project_dir, cfg, force=args.force):
+        sys.exit(1)                           # blocking issues -- abort before compile
     ok = run_build(project_dir, cfg,
                    onefile=onefile, compiler=args.compiler,
                    jobs=args.jobs, forced_python=args.python, ci=args.ci,

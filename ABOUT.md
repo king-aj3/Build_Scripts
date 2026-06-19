@@ -1,10 +1,39 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.10.0  (build.py)
+**Script version:** 1.11.0  (build.py)
 **Orchestrator:** build_all.py v1.2.2
-**Date:** 2026-06-13
+**Multi-project scheduler:** build_projects.py v1.0.0
+**Date:** 2026-06-19
 **License:** Internal use
+
+## What's new in 1.11.0 (build.py)
+
+- **Pre-build gate.** Before compiling, the build now refuses to run if it
+  would produce a guaranteed-broken binary: a **missing entry point** or a
+  declared `data_files`/`data_dirs` path that isn't on disk. It exits before
+  Nuitka starts, so you don't burn a 5–15 min compile on a build that can't
+  work. Version drift and unbundled-asset suggestions stay **warnings** (not
+  blocking). Pass `--force` to build anyway. (The existing warn-only
+  `preflight_warn` still runs first; the gate is the hard stop.)
+- **Repo-freshness report.** A build now does a read-only `git fetch` (bounded,
+  non-fatal) and tells you if the working tree is `N commits behind origin/…`
+  before it starts — so you don't ship a stale build. It is **report-only**:
+  it never modifies your tree. Actually pulling stays `build_all.py`'s job.
+
+## What's new — build_projects.py v1.0.0 (multi-project scheduler)
+
+- **Build several projects at once, scheduled by OS lane.** Sits on top of
+  `build_all.py`: each `(project × OS)` job runs as
+  `build_all.py <project> --only <host>`, so every audit gate, git pull, and
+  per-OS artifact path is inherited unchanged.
+- **Per-OS concurrency caps.** `windows = 1` (the shared build VM OOMs on
+  concurrent compiles — serial even across projects), `linux = --linux-jobs`
+  (default 2), `macos = --mac-jobs` (default: #projects; GitHub does the work).
+- **`--parallel` (default) / `--sequential`.** Parallel overlaps lanes and
+  captures each job to `build-logs/<project>-<host>.log`; sequential streams
+  each build live. `--only`, `--all --root DIR` discovery, and `--dry-run`
+  round it out. Full usage in HELP.md / USER_GUIDE.
 
 ## What's new in build_all.py 1.2.2
 

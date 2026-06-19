@@ -476,6 +476,33 @@ python <Build_Scripts>/build_all.py /path/to/project -- --standalone --clean
 
 Anything after `--` is passed straight to `build.py` on every host.
 
+### Building several projects at once — `build_projects.py`
+
+`build_all.py` builds **one** project across its OS hosts. To build **several**
+projects in one command, `build_projects.py` schedules every `(project × OS)`
+job by OS lane, each lane with its own concurrency cap, so independent work
+overlaps while shared hosts stay serial:
+
+- **windows = 1** — the build VM is shared; concurrent compiles OOM, so all
+  Windows jobs are serial **even across projects** (the long pole).
+- **linux = `--linux-jobs`** (default 2) — capped by RAM (LTO is heavy), tunable.
+- **macos = `--mac-jobs`** (default: # of projects) — GitHub Actions does the
+  compiling, so they all dispatch at once.
+
+```bash
+# all three projects, every OS, parallel (default):
+python <Build_Scripts>/build_projects.py ../ajj3-brain ../WealthBuilder ../Thrift_Reseller
+python <Build_Scripts>/build_projects.py --all --root ..        # discover projects
+python <Build_Scripts>/build_projects.py ../A ../B --only linux # safe Linux-only run
+python <Build_Scripts>/build_projects.py ../A ../B --sequential # one at a time, live
+python <Build_Scripts>/build_projects.py ../A ../B --dry-run    # preview the schedule
+```
+
+Each job is just `build_all.py <project> --only <host>`, so the audit gate,
+git pull, and per-OS artifact paths are inherited unchanged. In `--parallel`
+mode each job's output is captured to `build-logs/<project>-<host>.log`; in
+`--sequential` mode it streams live. Full flag list in HELP.md.
+
 ### Step 3 — Add remote hosts over SSH (when you have them)
 
 A Windows VM or a second box becomes a build host with `transport = "ssh"`.
