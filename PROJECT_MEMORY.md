@@ -764,6 +764,12 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build_projects.py v1.2.0: manage the default list from the CLI
+  (`--list-projects` / `--add-project NAME ...` / `--remove-project NAME ...`)
+  instead of hand-editing build_projects.toml. Bare name = sibling dir; dedup by
+  resolved path; warns if a project lacks build_hosts.toml but adds it anyway.
+  stdlib has no TOML writer, so the array is rewritten in place via regex while
+  the comment header is preserved (round-trips byte-identical).
 - 2026-06-19 — build_projects.py v1.1.0: default project list via
   `build_projects.toml` (`projects = [...]`). No-args run builds the curated set;
   adding a future project is a one-line edit (paths relative to the file).

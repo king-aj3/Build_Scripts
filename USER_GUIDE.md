@@ -490,9 +490,14 @@ overlaps while shared hosts stay serial:
   compiling, so they all dispatch at once.
 
 The project list comes from (in order): positional args → `--all` discovery →
-the **default list** in `build_projects.toml` (`projects = [...]`). So with no
-args it builds the curated set, and **adding a future project is a one-line edit
-to `build_projects.toml`** — no need to retype paths each time.
+the **default list** in `build_projects.toml`. So with no args it builds the
+curated set, which you **manage with CLI commands** (no hand-editing):
+
+```bash
+python <Build_Scripts>/build_projects.py --list-projects        # show the set + status
+python <Build_Scripts>/build_projects.py --add-project NewProj  # add (bare name = sibling dir)
+python <Build_Scripts>/build_projects.py --remove-project NewProj
+```
 
 ```bash
 # the default set (build_projects.toml), every OS, parallel:

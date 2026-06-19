@@ -14,9 +14,10 @@
   Schedules `(project × OS)` jobs by OS lane: windows=1 (shared VM), linux=2
   (`--linux-jobs`), macos=all (`--mac-jobs`). `--parallel`/`--sequential`,
   `--only`, `--all` discovery, `--dry-run`, `--` passthrough.
-- **Default project list** — `build_projects.toml` (`projects = [...]`). Run
-  `build_projects.py` with no args to build the curated set; add a future project
-  = one line in that file.
+- **Default project list + CLI management (v1.2.0)** — `build_projects.toml`
+  holds the curated set (no-args run builds it). Manage it with
+  `build_projects.py --list-projects / --add-project NAME / --remove-project NAME`
+  (no hand-editing; header preserved, edits round-trip byte-identical).
 - Docs refreshed (ABOUT/HELP/USER_GUIDE/PROJECT_MEMORY/CLAUDE); roadmap
   "parallel build-matrix" item marked DONE.
 
@@ -36,6 +37,7 @@
 
 ## Resume commands
 ```
+python build_projects.py --list-projects      # show the default build set
 python build_projects.py --dry-run            # preview the default-list schedule
 python build_projects.py --only linux         # first real run (safe)
 python build_projects.py                       # full cross-OS, all default projects

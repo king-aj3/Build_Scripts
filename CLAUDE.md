@@ -2,7 +2,7 @@
 
 **What it is.** Shared Nuitka build tooling used across ALL the user's PyCharm projects. A single `build.py` compiles *any* project to a native executable (invoked from PyCharm External Tools or CLI); `build_all.py` orchestrates the same `build.py` across Windows/Linux/macOS hosts. Config-driven via `build_config.toml` or `pyproject [tool.nuitka_builder]`, else pure auto-detection.
 
-**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.1.0 (per ABOUT.md, 2026-06-19).
+**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.2.0 (per ABOUT.md, 2026-06-19).
 
 ## Stack & layout
 - Python 3.11+ host (stdlib `tomllib`; `tomli` fallback on 3.10). No third-party deps — no requirements.txt.
@@ -33,7 +33,8 @@ python build_all.py "/path/to/project" -- --standalone --clean   # flags after -
 python build_projects.py                          # the default set in build_projects.toml
 python build_projects.py --only linux --dry-run   # preview a Linux-only run
 python build_projects.py ../ajj3-brain            # specific project(s) instead of the default list
-# Add a future project to the default set: add one line to build_projects.toml (projects = [...]).
+python build_projects.py --list-projects          # show the default set
+python build_projects.py --add-project NewProj    # add to the default set (or --remove-project)
 ```
 No unit-test suite in this repo; `build.py --test`/`--audit` against a real project is the smoke check.
 

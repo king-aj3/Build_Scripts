@@ -3,9 +3,17 @@
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.0  (build.py)
 **Orchestrator:** build_all.py v1.2.2
-**Multi-project scheduler:** build_projects.py v1.1.0
+**Multi-project scheduler:** build_projects.py v1.2.0
 **Date:** 2026-06-19
 **License:** Internal use
+
+## What's new in build_projects.py v1.2.0
+
+- **Manage the default project list from the CLI** — no hand-editing
+  `build_projects.toml`. `--list-projects` shows the set (with per-project
+  status), `--add-project NAME ...` and `--remove-project NAME ...` edit it
+  (a bare NAME is a sibling dir; a path works too; duplicates resolved by real
+  path). The file's comment header is preserved; edits round-trip cleanly.
 
 ## What's new in build_projects.py v1.1.0
 

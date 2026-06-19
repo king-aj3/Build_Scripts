@@ -26,12 +26,16 @@ so every audit gate, git pull, and per-OS artifact path that build_all.py and
 build.py already provide is inherited unchanged.
 
 The project list comes from (in order): positional args > `--all` discovery >
-the default list in `build_projects.toml`. So with NO args it builds the
-curated default set, and adding a future project is a one-line edit to that file.
+the default list in `build_projects.toml`. So with NO args it builds the curated
+default set, which you manage with `--list-projects` / `--add-project` /
+`--remove-project` (no hand-editing the file).
 
 USAGE
 -----
     python build_projects.py                                  # the default list (build_projects.toml)
+    python build_projects.py --list-projects                  # show the default list
+    python build_projects.py --add-project Foo Bar            # add to the list (sibling dirs)
+    python build_projects.py --remove-project Foo             # remove from the list
     python build_projects.py PROJ [PROJ ...]                  # build just these instead
     python build_projects.py --sequential                     # default list, one job at a time
     python build_projects.py --all --root ~/PycharmProjects   # discover projects instead
@@ -41,6 +45,9 @@ USAGE
 
 OPTIONS
 -------
+    --list-projects             Print the default project set (with status) and exit.
+    --add-project NAME ...      Add project(s) to build_projects.toml and exit.
+    --remove-project NAME ...   Remove project(s) from build_projects.toml and exit.
     --config PATH               Default project-list TOML (default: build_projects.toml).
     --parallel / --sequential   Overlap jobs by lane (default) or strictly serial.
     --only A,B                  Restrict to these OS hosts (linux,windows,macos).
@@ -58,7 +65,9 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import os
 import platform
+import re
 import subprocess
 import sys
 import threading
@@ -74,7 +83,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-SCHED_VERSION = "1.1.0"
+SCHED_VERSION = "1.2.0"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -168,6 +177,127 @@ def load_default_projects(config_path: Path) -> list[Path]:
         p = Path(entry).expanduser()
         out.append((p if p.is_absolute() else base / p).resolve())
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Project-list management (--list-projects / --add-project / --remove-project)
+# ─────────────────────────────────────────────────────────────────────────────
+def _split_csv(items: list[str]) -> list[str]:
+    """Flatten ['a,b', 'c'] -> ['a','b','c'] so `--add-project a,b c` works."""
+    return [x.strip() for tok in items for x in tok.split(",") if x.strip()]
+
+
+def _read_raw_projects(config_path: Path) -> list[str]:
+    """The `projects` array verbatim (stored strings, not resolved paths)."""
+    if not config_path.is_file():
+        return []
+    if _toml is None:
+        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
+    with open(config_path, "rb") as fh:
+        return [str(e) for e in _toml.load(fh).get("projects", [])]
+
+
+def _resolve_stored(entry: str, config_dir: Path) -> Path:
+    """How a stored entry resolves (relative entries are vs. the config dir)."""
+    p = Path(entry).expanduser()
+    return (p if p.is_absolute() else config_dir / p).resolve()
+
+
+def _normalize_token(token: str, config_dir: Path) -> tuple[Path, str]:
+    """A CLI token -> (abs_path, stored_form). A bare NAME is treated as a
+    sibling project dir (the workspace layout: projects live beside the config
+    dir's parent); a path is resolved against the CWD. The stored form is made
+    relative to the config dir when possible, matching the existing entries."""
+    token = token.strip()
+    p = Path(token).expanduser()
+    if ("/" in token) or (os.sep in token) or token.startswith(".") or p.is_absolute():
+        abs_path = (p if p.is_absolute() else Path.cwd() / p).resolve()
+    else:
+        abs_path = (config_dir.parent / token).resolve()   # bare name = sibling
+    try:
+        stored = Path(os.path.relpath(abs_path, config_dir)).as_posix()
+    except ValueError:                                     # different drive (Windows)
+        stored = str(abs_path)
+    return abs_path, stored
+
+
+def _write_projects(config_path: Path, entries: list[str]) -> None:
+    """Rewrite the `projects = [...]` array, preserving the file's comments.
+
+    stdlib has no TOML writer, but the array is simple: swap just that block and
+    leave the header untouched. A function replacement avoids re.sub treating
+    backslashes in stored paths as group references."""
+    block = "projects = [\n" + "".join(f'    "{e}",\n' for e in entries) + "]"
+    if config_path.is_file():
+        text = config_path.read_text(encoding="utf-8")
+        if re.search(r"(?ms)^projects\s*=\s*\[.*?\]", text):
+            text = re.sub(r"(?ms)^projects\s*=\s*\[.*?\]", lambda _m: block, text, count=1)
+        else:
+            text = text.rstrip() + "\n\n" + block + "\n"
+    else:
+        text = ("# build_projects.toml — default project list for build_projects.py\n\n"
+                + block + "\n")
+    config_path.write_text(text, encoding="utf-8")
+
+
+def cmd_list_projects(config_path: Path) -> None:
+    config_dir = config_path.resolve().parent
+    raw = _read_raw_projects(config_path)
+    banner(f"Default projects  ({config_path})")
+    if not raw:
+        say("  (none — add some with --add-project NAME)")
+        return
+    width = max(len(e) for e in raw)
+    for e in raw:
+        abs_path = _resolve_stored(e, config_dir)
+        if not abs_path.is_dir():
+            status = "MISSING DIR"
+        elif not (abs_path / "build_hosts.toml").is_file():
+            status = "no build_hosts.toml (run build_all.py --init)"
+        else:
+            status = "ok"
+        say(f"  {e:<{width}}  ->  {abs_path}   [{status}]")
+    say(f"\n  {len(raw)} project(s).")
+
+
+def cmd_add_projects(config_path: Path, tokens: list[str]) -> None:
+    config_dir = config_path.resolve().parent
+    raw = _read_raw_projects(config_path)
+    have = {_resolve_stored(e, config_dir) for e in raw}
+    for tok in tokens:
+        abs_path, stored = _normalize_token(tok, config_dir)
+        if not abs_path.is_dir():
+            die(f"not a directory: '{tok}' -> {abs_path}")
+        if abs_path in have:
+            say(f"  (already present) {stored}")
+            continue
+        if not (abs_path / "build_hosts.toml").is_file():
+            warn(f"{stored}: no build_hosts.toml yet — run "
+                 f"`build_all.py {stored} --init` before building. Added anyway.")
+        raw.append(stored)
+        have.add(abs_path)
+        step(f"added: {stored}")
+    _write_projects(config_path, raw)
+    step(f"{len(raw)} project(s) now in {config_path.name}")
+
+
+def cmd_remove_projects(config_path: Path, tokens: list[str]) -> None:
+    config_dir = config_path.resolve().parent
+    raw = _read_raw_projects(config_path)
+    targets = {_normalize_token(t, config_dir)[0] for t in tokens}
+    matched, kept = set(), []
+    for e in raw:
+        ap = _resolve_stored(e, config_dir)
+        if ap in targets:
+            matched.add(ap)
+            step(f"removed: {e}")
+        else:
+            kept.append(e)
+    for t, tok in zip((_normalize_token(t, config_dir)[0] for t in tokens), tokens):
+        if t not in matched:
+            warn(f"not in the list: {tok}")
+    _write_projects(config_path, kept)
+    step(f"{len(kept)} project(s) now in {config_path.name}")
 
 
 def lane_cap(host: str, linux_jobs: int, mac_jobs: int) -> int:
@@ -273,6 +403,14 @@ def main() -> None:
     ap.add_argument("--config", metavar="PATH",
                     help="Default project-list TOML used when no projects are "
                          "given (default: build_projects.toml alongside this script)")
+    mgmt = ap.add_mutually_exclusive_group()
+    mgmt.add_argument("--list-projects", action="store_true",
+                      help="List the default project set and exit")
+    mgmt.add_argument("--add-project", nargs="+", metavar="NAME",
+                      help="Add project(s) to the default list and exit "
+                           "(a bare NAME is a sibling dir; a path also works)")
+    mgmt.add_argument("--remove-project", nargs="+", metavar="NAME",
+                      help="Remove project(s) from the default list and exit")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--parallel", dest="parallel", action="store_true",
                       default=True, help="Overlap jobs by lane (default)")
@@ -291,14 +429,22 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="Print schedule; build nothing")
     args = ap.parse_args(argv)
 
+    config_path = (Path(args.config).expanduser() if args.config
+                   else Path(__file__).resolve().parent / "build_projects.toml")
+
+    # Project-list management commands: mutate/read the list and exit (no build).
+    if args.list_projects:
+        cmd_list_projects(config_path); sys.exit(0)
+    if args.add_project:
+        cmd_add_projects(config_path, _split_csv(args.add_project)); sys.exit(0)
+    if args.remove_project:
+        cmd_remove_projects(config_path, _split_csv(args.remove_project)); sys.exit(0)
+
     # Resolve build_all.py.
     build_all_py = (Path(args.build_all).expanduser() if args.build_all
                     else Path(__file__).resolve().parent / "build_all.py")
     if not build_all_py.is_file():
         die(f"build_all.py not found at: {build_all_py}  (use --build-all PATH)")
-
-    config_path = (Path(args.config).expanduser() if args.config
-                   else Path(__file__).resolve().parent / "build_projects.toml")
 
     # Resolve the project list: explicit args > --all discovery > config default.
     if args.all:
