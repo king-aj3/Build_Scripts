@@ -814,11 +814,12 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
-- 2026-06-19 — build_all.py v1.2.5: zip ALL OS binaries (windows + linux joined
-  the macOS zipping), one consistent `dist/<project>-<label>.zip` per OS; exec
-  bit preserved for linux/macOS. Linux ALSO keeps its `.tar.gz` (native Linux
-  format) alongside the zip — owner wants both. `_package_zip` (generic, all
-  hosts) + `_package_linux` (tar.gz extra). Existing 3 projects re-packaged.
+- 2026-06-19 — build_all.py v1.2.6: package deliverables — **windows + macOS →
+  `.zip`** (`_package_zip`; fixes the 0-byte Gumroad upload; macOS exec bit
+  preserved in the zip), **linux → `.tar.gz` ONLY** (`_package_linux`; native
+  Linux format, NOT zipped). (Iterated: 1.2.4 macОS-only zip, 1.2.5 zip-
+  everything, then owner settled here.) Per project = linux `.tar.gz` + windows
+  `.zip` + macOS `.zip`. Collector skips `*.zip` and `*.tar.gz` (no nesting).
 - 2026-06-19 — build_all.py v1.2.4: auto-zip macOS binaries
   (`dist/<project>-macos-arm64.zip`) alongside the linux `.tar.gz`. A raw Mach-O
   uploaded to Gumroad/etc shows as **0 bytes**; zipping fixes it. The zip forces

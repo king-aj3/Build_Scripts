@@ -66,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.5"
+ORCH_VERSION = "1.2.6"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -448,20 +448,19 @@ def build_github(name: str, host: dict, project_dir: Path, label: str,
 # ─────────────────────────────────────────────────────────────────────────────
 def _package_zip(project_dir: Path,
                  results: list[tuple[str, str, bool, float]], dry: bool) -> None:
-    """zip every successful host's dist/<label>/ -> dist/<project>-<label>.zip.
+    """zip each successful WINDOWS / macOS host's dist/<label>/ -> dist/<project>-<label>.zip.
 
-    ONE consistent deliverable for every OS. A raw binary -- especially a macOS
-    Mach-O with no extension -- shows as 0 bytes when uploaded to Gumroad and
-    similar sites; a .zip fixes that and gives customers one familiar format.
-    The unix executable bit is forced on and PRESERVED in the zip (the ZipInfo
-    carries the mode), so linux/macOS binaries still run after the buyer unzips
-    even if a transport stripped +x. Windows ignores the unix bit. Re-runs
-    overwrite the archive.
+    A raw binary -- especially a macOS Mach-O with no extension -- shows as 0
+    bytes when uploaded to Gumroad and similar sites; a .zip fixes that. The unix
+    executable bit is forced on and PRESERVED in the zip (the ZipInfo carries the
+    mode), so the macOS binary still runs after the buyer unzips even if a
+    transport stripped +x. Linux is NOT zipped here -- it ships .tar.gz only (see
+    _package_linux). Re-runs overwrite the archive.
     """
     import zipfile
     for name, label, ok, _dur in results:
-        if not ok:
-            continue
+        if not ok or label.startswith("linux"):
+            continue                        # linux -> .tar.gz only (see _package_linux)
         src = project_dir / "dist" / label
         if not src.is_dir():
             continue
@@ -587,8 +586,8 @@ def main() -> None:
             ok = False
         results.append((name, label, ok, _time.monotonic() - _t0))
 
-    _package_zip(project_dir, results, args.dry_run)        # one .zip per OS
-    _package_linux(project_dir, results, args.dry_run)      # plus the conventional linux .tar.gz
+    _package_zip(project_dir, results, args.dry_run)        # windows/macOS -> .zip
+    _package_linux(project_dir, results, args.dry_run)      # linux -> .tar.gz only
 
     banner("SUMMARY")
     if not results:
