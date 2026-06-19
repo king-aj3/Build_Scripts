@@ -1,12 +1,22 @@
 # About
 
 **Project:** Build_Scripts — Common Nuitka Build System
-**Script version:** 1.11.0  (build.py)
+**Script version:** 1.11.1  (build.py)
 **Orchestrator:** build_all.py v1.2.2
 **Multi-project scheduler:** build_projects.py v1.2.0
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
 **Date:** 2026-06-19
 **License:** Internal use
+
+## What's new in 1.11.1 (build.py)
+
+- **`report_repo_freshness` now uses the shared `gitutil.py`** instead of its own
+  inline `git` logic (DRY). Output is byte-identical. On a host where `gitutil`
+  isn't importable (e.g. a remote build host that hasn't synced it yet), the
+  freshness report is silently skipped — it's informational, never essential.
+  `build_all.py`'s local pull intentionally stays inline (its `run()`/dry-run
+  wrapper + no-GCM-on-local-pull are deliberate; routing it through `gitutil`
+  would change behavior for a 1-line gain).
 
 ## What's new — sync_projects.py v1.0.0 (multi-repo git sync)
 

@@ -68,7 +68,7 @@ except ImportError:
 #  CONSTANTS
 # ═════════════════════════════════════════════════════════════════════════════
 
-SCRIPT_VERSION    = "1.11.0"
+SCRIPT_VERSION    = "1.11.1"
 COMPATIBLE_PYTHON = [(3, 14), (3, 13), (3, 12), (3, 11), (3, 10)]
 MIN_PYTHON        = (3, 10)
 MAX_PYTHON        = (3, 14)
@@ -2080,29 +2080,26 @@ def report_repo_freshness(project_dir: Path) -> None:
     HEAD is behind/ahead. Bounded + non-fatal: a slow/offline/auth-less remote
     just skips the report. Actually *pulling* stays build_all.py's job; this
     only warns you when you're about to build a stale tree.
+
+    Uses the shared gitutil.py layer. If gitutil isn't importable (e.g. a remote
+    build host that hasn't synced it yet), the freshness report is simply
+    skipped -- it is informational, never essential to the build.
     """
-    if not (project_dir / ".git").exists():
-        return
-
-    def _git(*a, timeout=15):
-        try:
-            return subprocess.run(["git", "-C", str(project_dir), *a],
-                                  capture_output=True, text=True, timeout=timeout)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-
-    up = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", timeout=5)
-    if not up or up.returncode != 0 or not up.stdout.strip():
-        return                              # detached HEAD or no upstream -- skip
-    upstream = up.stdout.strip()
-    _git("fetch", "--quiet", timeout=15)    # read-only; non-fatal if it fails
-    counts = _git("rev-list", "--left-right", "--count", f"HEAD...{upstream}", timeout=5)
-    if not counts or counts.returncode != 0:
-        return
     try:
-        ahead, behind = (int(x) for x in counts.stdout.split())
-    except ValueError:
+        import gitutil
+    except ImportError:
+        return                              # gitutil not on this host -- skip freshness
+
+    if not gitutil.is_repo(project_dir):
         return
+    upstream = gitutil.upstream_ref(project_dir)
+    if not upstream:
+        return                              # detached HEAD or no upstream -- skip
+    gitutil.fetch(project_dir)              # read-only; non-fatal if it fails
+    ab = gitutil.ahead_behind(project_dir, upstream)
+    if ab is None:
+        return
+    ahead, behind = ab
 
     step("Repo freshness")
     if behind == 0 and ahead == 0:

@@ -691,13 +691,14 @@ project you weren't even thinking about. Design decisions and their reasons:
 
 ## Open items / future work
 
-- **[ROADMAP] sync_projects.py — wire build scripts into gitutil + add write
-  verbs.** Two deferred follow-ups: (1) refactor `build.py`'s
-  `report_repo_freshness` and `build_all.py`'s `git pull --ff-only` to call
-  `gitutil.py` (the shared git layer) — pure-DRY, but touches two production
-  files, so gate each with the smoke check (`build.py --audit/--test`,
-  `build_all.py --dry-run`) and a back-compat seam. (2) Add the gated write
-  verbs to sync — `--push` (clean+ahead, re-confirm branch, never `--force`,
+- **[PARTIAL] sync_projects.py — wire build scripts into gitutil + add write
+  verbs.** (1a) **[DONE 2026-06-19]** `build.py report_repo_freshness` now calls
+  `gitutil.py` (byte-identical output; graceful skip if gitutil absent on a
+  remote host). (1b) **[WON'T — by decision]** `build_all.py`'s local pull stays
+  inline: it's one `git pull --ff-only` inside the `run()`/dry-run wrapper, and
+  routing it through gitutil would add GCM hardening + change logging/error
+  handling — a behavior change for a 1-line gain on a fragile file. Revisit only
+  if build_all grows more git needs. (2) Add the gated write verbs to sync — `--push` (clean+ahead, re-confirm branch, never `--force`,
   report+leave-untouched on auth failure), then `--commit MSG` (tracked-only,
   message required) and `--merge` (explicit, per-repo confirm, never auto-resolve
   diverged). Build each against a deliberately dirty/ahead/diverged scratch repo
@@ -811,6 +812,13 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build.py v1.11.1: `report_repo_freshness` wired to gitutil.py
+  (removes ~25 lines of inline _git/fetch/rev-list dup; output byte-identical;
+  graceful `try/except ImportError` skip so a remote build host without gitutil
+  still builds). build_all.py's local pull deliberately left inline (its
+  run()/dry-run wrapper + intentional no-GCM-on-local-pull; routing through
+  gitutil would change behavior for a 1-line gain — not worth it on a fragile
+  production file).
 - 2026-06-19 — sync_projects.py v1.0.0 (NEW) + gitutil.py v1.0.0 + projutil.py
   (NEW shared modules). Multi-repo git status + safe fast-forward update across
   the project repos. Safe by default (no verb = read-only fetch+status; only

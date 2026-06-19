@@ -16,6 +16,9 @@
   extracted from build_projects.py (which now imports it; behavior byte-identical).
 - Design from a 7-agent analysis; code passed a 3-lens adversarial review.
   Validated `--pull` against /tmp scratch repos (behind / behind+dirty / diverged).
+- **build.py v1.11.1** — `report_repo_freshness` wired to gitutil (byte-identical
+  output; graceful skip if gitutil absent on a remote host). build_all.py's local
+  pull left inline by decision (1-line gain not worth a behavior change).
 - Docs updated (ABOUT/HELP/USER_GUIDE/PROJECT_MEMORY/CLAUDE).
 
 ## Current state
@@ -24,10 +27,11 @@
   after the projutil extraction.
 
 ## Next task (the ONE thing)
-- **Deferred Phase 2 — wire build scripts into gitutil** (pure DRY): make
-  `build.py` `report_repo_freshness` and `build_all.py`'s `git pull --ff-only`
-  call `gitutil.py`. Touches two production files → gate each with smoke checks
-  (`build.py --audit/--test`, `build_all.py --dry-run`) + a back-compat seam.
+- **sync write verbs** (`--push`, then `--commit MSG` / `--merge`) — goes BEYOND
+  the chosen v1 scope (status + ff-pull), so confirm with me first. Build each
+  against a deliberately dirty/ahead/diverged /tmp scratch repo since the live
+  repos are all clean. `--push`: clean+ahead only, re-confirm branch, never
+  `--force`, report-and-leave-untouched on auth failure.
 
 ## Open questions / blockers
 - sync write verbs (`--push`/`--commit`/`--merge`) are deferred — build them
