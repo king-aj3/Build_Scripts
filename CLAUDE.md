@@ -2,13 +2,14 @@
 
 **What it is.** Shared Nuitka build tooling used across ALL the user's PyCharm projects. A single `build.py` compiles *any* project to a native executable (invoked from PyCharm External Tools or CLI); `build_all.py` orchestrates the same `build.py` across Windows/Linux/macOS hosts. Config-driven via `build_config.toml` or `pyproject [tool.nuitka_builder]`, else pure auto-detection.
 
-**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.0.0 (per ABOUT.md, 2026-06-19).
+**Status.** Active. build.py v1.11.0, build_all.py v1.2.2, build_projects.py v1.1.0 (per ABOUT.md, 2026-06-19).
 
 ## Stack & layout
 - Python 3.11+ host (stdlib `tomllib`; `tomli` fallback on 3.10). No third-party deps — no requirements.txt.
 - Entry points: `build.py` (per-machine build brain), `build_all.py` (cross-OS orchestrator for ONE project), and `build_projects.py` (schedules MANY projects × OSes, per-OS concurrency lanes; calls `build_all.py --only <host>` per job).
 - `examples/` — per-project `build_config.*.toml`, `build_config.template.toml`, `macos-build.yml` (GitHub Actions arm64).
 - `build_hosts.template.toml` (repo root) — host-map template for `build_all.py`.
+- `build_projects.toml` (repo root) — default project list for `build_projects.py` (no-args build set; add a project = one line).
 - Build/dist: artifacts (`build_env/`, `build/`, `dist/`, `build.log`) land in the **target** project, never here. Default `--onefile`; per-OS outputs in `dist/<os>-<arch>/`.
 
 ## How to run / build / test
@@ -29,8 +30,10 @@ python build_all.py "/path/to/project" --only linux
 python build_all.py "/path/to/project" -- --standalone --clean   # flags after -- pass to build.py
 
 # Build SEVERAL projects across all OSes at once (per-OS lanes: win=1, linux=2, mac=all)
-python build_projects.py ../ajj3-brain ../WealthBuilder ../Thrift_Reseller   # parallel (default)
-python build_projects.py --all --root .. --only linux --dry-run              # discover + preview
+python build_projects.py                          # the default set in build_projects.toml
+python build_projects.py --only linux --dry-run   # preview a Linux-only run
+python build_projects.py ../ajj3-brain            # specific project(s) instead of the default list
+# Add a future project to the default set: add one line to build_projects.toml (projects = [...]).
 ```
 No unit-test suite in this repo; `build.py --test`/`--audit` against a real project is the smoke check.
 

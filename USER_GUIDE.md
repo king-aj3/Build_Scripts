@@ -489,13 +489,19 @@ overlaps while shared hosts stay serial:
 - **macos = `--mac-jobs`** (default: # of projects) — GitHub Actions does the
   compiling, so they all dispatch at once.
 
+The project list comes from (in order): positional args → `--all` discovery →
+the **default list** in `build_projects.toml` (`projects = [...]`). So with no
+args it builds the curated set, and **adding a future project is a one-line edit
+to `build_projects.toml`** — no need to retype paths each time.
+
 ```bash
-# all three projects, every OS, parallel (default):
-python <Build_Scripts>/build_projects.py ../ajj3-brain ../WealthBuilder ../Thrift_Reseller
-python <Build_Scripts>/build_projects.py --all --root ..        # discover projects
-python <Build_Scripts>/build_projects.py ../A ../B --only linux # safe Linux-only run
-python <Build_Scripts>/build_projects.py ../A ../B --sequential # one at a time, live
-python <Build_Scripts>/build_projects.py ../A ../B --dry-run    # preview the schedule
+# the default set (build_projects.toml), every OS, parallel:
+python <Build_Scripts>/build_projects.py
+python <Build_Scripts>/build_projects.py --only linux           # safe Linux-only run
+python <Build_Scripts>/build_projects.py --sequential           # one at a time, live
+python <Build_Scripts>/build_projects.py --dry-run              # preview the schedule
+python <Build_Scripts>/build_projects.py ../OtherProj           # build specific projects instead
+python <Build_Scripts>/build_projects.py --all --root ..        # auto-discover instead
 ```
 
 Each job is just `build_all.py <project> --only <host>`, so the audit gate,

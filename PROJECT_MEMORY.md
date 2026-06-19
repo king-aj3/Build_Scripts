@@ -764,6 +764,11 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build_projects.py v1.1.0: default project list via
+  `build_projects.toml` (`projects = [...]`). No-args run builds the curated set;
+  adding a future project is a one-line edit (paths relative to the file).
+  Precedence: positional args → `--all` discovery → config list. `--config PATH`
+  overrides. The "easy way to grow the build set" without retyping paths.
 - 2026-06-19 — build_projects.py v1.0.0 (NEW): multi-project scheduler above
   `build_all.py`. Builds N projects across their OS hosts, scheduling
   `(project × OS)` jobs by OS lane with per-host concurrency caps — windows=1

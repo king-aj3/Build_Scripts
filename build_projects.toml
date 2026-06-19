@@ -1,0 +1,19 @@
+# build_projects.toml — default project list for build_projects.py
+# ====================================================================
+# When you run `python build_projects.py` with NO project arguments, it
+# builds exactly this list. To add a future project to the build set, add
+# ONE line below — a path relative to THIS file, or an absolute path.
+#
+#   python build_projects.py                 # builds every project listed here
+#   python build_projects.py --dry-run       # preview the schedule for this list
+#   python build_projects.py ../OtherProj    # ignore this list, build only args
+#   python build_projects.py --all --root .. # ignore this list, auto-discover instead
+#
+# A project qualifies only if it has its own build_hosts.toml (run
+# `build_all.py <project> --init` once to generate one).
+
+projects = [
+    "../ajj3-brain",
+    "../WealthBuilder",
+    "../Thrift_Reseller",
+]

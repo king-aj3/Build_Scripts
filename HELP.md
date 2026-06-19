@@ -311,11 +311,18 @@ Jobs are scheduled by **OS lane**, each with its own concurrency cap, so
 independent work overlaps while shared, RAM-limited hosts stay serial.
 
 ```
-python build_projects.py PROJ [PROJ ...] [options] [-- build.py-flags]
+python build_projects.py [PROJ ...] [options] [-- build.py-flags]
 ```
+
+**Project list** comes from (in order): positional args → `--all` discovery →
+the default list in `build_projects.toml`. So `build_projects.py` with **no
+args** builds the curated default set, and **adding a future project is a
+one-line edit** to `build_projects.toml` (`projects = [...]`, paths relative to
+that file). A project qualifies only if it has its own `build_hosts.toml`.
 
 | Flag                     | Effect                                                       |
 | ------------------------ | ------------------------------------------------------------ |
+| `--config PATH`          | Default project-list TOML (default: `build_projects.toml` beside the script). |
 | `--parallel`             | **Default.** Overlap jobs by lane; capture each to `build-logs/<project>-<host>.log`. |
 | `--sequential`           | Run strictly one job at a time, streaming each build live.   |
 | `--only A,B`             | Restrict to these OS hosts (e.g. `--only linux,macos`).      |
@@ -336,7 +343,9 @@ Actions does the compiling, so local cost is just polling).
 
 | Goal                                   | Command                                                          |
 | -------------------------------------- | ---------------------------------------------------------------- |
-| Build 3 projects, all OSes, parallel   | `python build_projects.py ../ajj3-brain ../WealthBuilder ../Thrift_Reseller` |
+| Build the default project set, all OSes| `python build_projects.py`                                       |
+| Add a project to the default set       | add one line to `build_projects.toml` (`projects = [...]`)       |
+| Build specific projects instead        | `python build_projects.py ../ajj3-brain ../WealthBuilder`        |
 | Discover & build everything            | `python build_projects.py --all --root ..`                       |
 | Linux only (safe first real run)       | `python build_projects.py ../A ../B ../C --only linux`           |
 | One at a time, live output             | `python build_projects.py ../A ../B --sequential`                |

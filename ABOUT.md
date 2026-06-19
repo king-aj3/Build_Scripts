@@ -3,9 +3,17 @@
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.0  (build.py)
 **Orchestrator:** build_all.py v1.2.2
-**Multi-project scheduler:** build_projects.py v1.0.0
+**Multi-project scheduler:** build_projects.py v1.1.0
 **Date:** 2026-06-19
 **License:** Internal use
+
+## What's new in build_projects.py v1.1.0
+
+- **Default project list (`build_projects.toml`).** Run `build_projects.py`
+  with no args to build a curated set; **adding a future project is a one-line
+  edit** (`projects = [...]`, paths relative to the file). Precedence:
+  positional args → `--all` discovery → this default list. `--config PATH`
+  points at an alternate list.
 
 ## What's new in 1.11.0 (build.py)
 
@@ -21,7 +29,7 @@
   before it starts — so you don't ship a stale build. It is **report-only**:
   it never modifies your tree. Actually pulling stays `build_all.py`'s job.
 
-## What's new — build_projects.py v1.0.0 (multi-project scheduler)
+## What's new — build_projects.py v1.0.0 → v1.1.0 (multi-project scheduler)
 
 - **Build several projects at once, scheduled by OS lane.** Sits on top of
   `build_all.py`: each `(project × OS)` job runs as

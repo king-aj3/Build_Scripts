@@ -25,17 +25,23 @@ Each job is just:
 so every audit gate, git pull, and per-OS artifact path that build_all.py and
 build.py already provide is inherited unchanged.
 
+The project list comes from (in order): positional args > `--all` discovery >
+the default list in `build_projects.toml`. So with NO args it builds the
+curated default set, and adding a future project is a one-line edit to that file.
+
 USAGE
 -----
-    python build_projects.py PROJ [PROJ ...]                  # build these
-    python build_projects.py PROJ ... --sequential            # one job at a time
-    python build_projects.py --all --root ~/PycharmProjects   # discover projects
-    python build_projects.py P1 P2 --only linux,macos         # subset of OSes
-    python build_projects.py P1 P2 --linux-jobs 3             # more Linux overlap
-    python build_projects.py P1 P2 -- --standalone --clean    # flags -> build.py
+    python build_projects.py                                  # the default list (build_projects.toml)
+    python build_projects.py PROJ [PROJ ...]                  # build just these instead
+    python build_projects.py --sequential                     # default list, one job at a time
+    python build_projects.py --all --root ~/PycharmProjects   # discover projects instead
+    python build_projects.py --only linux,macos               # subset of OSes
+    python build_projects.py --linux-jobs 3                   # more Linux overlap
+    python build_projects.py -- --standalone --clean          # flags -> build.py
 
 OPTIONS
 -------
+    --config PATH               Default project-list TOML (default: build_projects.toml).
     --parallel / --sequential   Overlap jobs by lane (default) or strictly serial.
     --only A,B                  Restrict to these OS hosts (linux,windows,macos).
     --linux-jobs N              Max concurrent Linux builds (default 2).
@@ -68,7 +74,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-SCHED_VERSION = "1.0.0"
+SCHED_VERSION = "1.1.0"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -141,6 +147,27 @@ def discover_projects(root: Path) -> list[Path]:
         if child.is_dir() and (child / "build_hosts.toml").is_file():
             found.append(child.resolve())
     return found
+
+
+def load_default_projects(config_path: Path) -> list[Path]:
+    """Read the default project list from build_projects.toml (`projects = [...]`).
+
+    This is the "easy way to add a project": drop one line in build_projects.toml
+    and it builds by default (no args). Relative paths resolve against the config
+    file's directory; absolute paths are used as-is. Returns [] if absent.
+    """
+    if not config_path.is_file():
+        return []
+    if _toml is None:
+        die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
+    with open(config_path, "rb") as fh:
+        cfg = _toml.load(fh)
+    base = config_path.resolve().parent
+    out = []
+    for entry in cfg.get("projects", []):
+        p = Path(entry).expanduser()
+        out.append((p if p.is_absolute() else base / p).resolve())
+    return out
 
 
 def lane_cap(host: str, linux_jobs: int, mac_jobs: int) -> int:
@@ -243,6 +270,9 @@ def main() -> None:
                     help="Discover projects under --root (dirs with build_hosts.toml)")
     ap.add_argument("--root", default=".",
                     help="Root for --all discovery (default: current dir)")
+    ap.add_argument("--config", metavar="PATH",
+                    help="Default project-list TOML used when no projects are "
+                         "given (default: build_projects.toml alongside this script)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--parallel", dest="parallel", action="store_true",
                       default=True, help="Overlap jobs by lane (default)")
@@ -267,20 +297,33 @@ def main() -> None:
     if not build_all_py.is_file():
         die(f"build_all.py not found at: {build_all_py}  (use --build-all PATH)")
 
-    # Resolve the project list.
+    config_path = (Path(args.config).expanduser() if args.config
+                   else Path(__file__).resolve().parent / "build_projects.toml")
+
+    # Resolve the project list: explicit args > --all discovery > config default.
     if args.all:
+        source = f"--all discovery under {args.root}"
         projects = discover_projects(Path(args.root).expanduser().resolve())
         if not projects:
             die(f"--all found no projects with a build_hosts.toml under {args.root}")
-    else:
-        if not args.projects:
-            die("no projects given (positional dirs, or use --all --root DIR)")
+    elif args.projects:
+        source = "command-line args"
         projects = []
         for p in args.projects:
             pd = Path(p).expanduser().resolve()
             if not pd.is_dir():
                 die(f"project dir not found: {pd}")
             projects.append(pd)
+    else:
+        source = config_path.name
+        projects = load_default_projects(config_path)
+        if not projects:
+            die(f"no projects given. Pass project dirs, use --all --root DIR, or "
+                f"list them in {config_path} (projects = [...]).")
+        missing = [p for p in projects if not p.is_dir()]
+        if missing:
+            die(f"{config_path.name} lists missing dir(s): "
+                + ", ".join(str(m) for m in missing))
 
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     mac_jobs = args.mac_jobs if args.mac_jobs is not None else len(projects)
@@ -304,6 +347,7 @@ def main() -> None:
     banner(f"build_projects v{SCHED_VERSION}  |  {len(projects)} project(s), "
            f"{len(jobs)} job(s)")
     say(f"  mode      : {'parallel' if args.parallel else 'sequential'}")
+    say(f"  projects  : from {source}")
     say(f"  build_all : {build_all_py}")
     say(f"  lane caps : windows={caps['windows']} (shared VM)  "
         f"linux={caps['linux']}  macos={caps['macos']}")
