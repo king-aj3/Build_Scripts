@@ -814,6 +814,13 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build_all.py v1.2.4: auto-zip macOS binaries
+  (`dist/<project>-macos-arm64.zip`) alongside the linux `.tar.gz`. A raw Mach-O
+  uploaded to Gumroad/etc shows as **0 bytes**; zipping fixes it. The zip forces
+  + preserves the executable bit (ZipInfo unix mode) so it runs after unzip even
+  if a transport stripped `+x`. Collector skip extended to `*.zip` too (no
+  nesting). Windows `.exe` left raw (uploads fine). Existing 3 macOS binaries
+  zipped retroactively via the same function.
 - 2026-06-19 — Windows VM sizing, MEASURED. Bumping the win10_pro_x64_python
   guest 4→16 vCPU (presented as 2 sockets × 8 cores — Win10 *client* caps at 2
   sockets, and it ONLY onlines hot-added vCPUs after a reboot; RAM hot-applies)

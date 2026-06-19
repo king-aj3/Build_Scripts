@@ -2,7 +2,7 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.1  (build.py)
-**Orchestrator:** build_all.py v1.2.3
+**Orchestrator:** build_all.py v1.2.4
 **Multi-project scheduler:** build_projects.py v1.2.0
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
 **Date:** 2026-06-19
@@ -80,6 +80,16 @@
   captures each job to `build-logs/<project>-<host>.log`; sequential streams
   each build live. `--only`, `--all --root DIR` discovery, and `--dry-run`
   round it out. Full usage in HELP.md / USER_GUIDE.
+
+## What's new in build_all.py 1.2.4
+
+- **macOS binaries are now auto-zipped** (`dist/<project>-macos-arm64.zip`),
+  alongside the existing linux `.tar.gz`. A raw Mach-O executable uploaded to
+  Gumroad and similar sites shows as **0 bytes** — zipping fixes that. The
+  executable bit is forced on and preserved in the zip (the ZipInfo carries the
+  unix mode), so the binary runs after the buyer unzips even if a transport
+  stripped `+x`. The local-collector skip now also ignores `*.zip` (same
+  no-nesting fix as `*.tar.gz`). Windows `.exe` is left as-is (uploads fine).
 
 ## What's new in build_all.py 1.2.3
 

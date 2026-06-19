@@ -606,14 +606,18 @@ manual-only (`workflow_dispatch`) — it never burns runner minutes on push.
 
 ### Linux packaging (automatic)
 
-After every `build_all.py` run, each successful **linux** host's output
-folder is packaged automatically:
+After every `build_all.py` run, successful host outputs are packaged
+automatically (re-runs overwrite the archive):
 
 ```
 dist/linux-x86_64/  ->  dist/<project>-linux-x86_64.tar.gz
+dist/macos-arm64/   ->  dist/<project>-macos-arm64.zip
 ```
 
-Windows and macOS outputs are left as-is. Re-runs overwrite the archive.
+The macOS **zip is required for distribution** — a raw Mach-O executable
+uploaded to Gumroad and similar sites shows as **0 bytes**; the zip fixes that
+and preserves the executable bit so it runs after the buyer unzips. The
+Windows `.exe` is left as-is (it uploads fine).
 
 ---
 

@@ -66,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.3"
+ORCH_VERSION = "1.2.4"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -289,7 +289,7 @@ def build_local(name: str, host: dict, project_dir: Path, build_py: Path,
     target.mkdir(parents=True, exist_ok=True)
     moved = 0
     for entry in list(dist.iterdir()):
-        if entry.name in reserved or entry == target or entry.name.endswith(".tar.gz"):
+        if entry.name in reserved or entry == target or entry.name.endswith((".tar.gz", ".zip")):
             continue
         shutil.move(str(entry), str(target / entry.name))
         moved += 1
@@ -444,7 +444,7 @@ def build_github(name: str, host: dict, project_dir: Path, label: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Linux packaging (automatic)
+#  Linux / macOS packaging (automatic)
 # ─────────────────────────────────────────────────────────────────────────────
 def _package_linux(project_dir: Path,
                    results: list[tuple[str, str, bool, float]], dry: bool) -> None:
@@ -465,6 +465,36 @@ def _package_linux(project_dir: Path,
         with tarfile.open(tgz, "w:gz") as tf:
             for entry in sorted(src.iterdir()):
                 tf.add(entry, arcname=entry.name)
+
+
+def _package_macos(project_dir: Path,
+                   results: list[tuple[str, str, bool, float]], dry: bool) -> None:
+    """zip every successful macos host's dist/<label>/ folder.
+
+    macOS onefile binaries MUST be zipped for distribution: uploaded raw, a
+    Mach-O executable with no extension shows as 0 bytes on Gumroad and similar
+    sites. The executable bit is forced on and preserved in the zip (the ZipInfo
+    carries the unix mode), so the binary still runs after the buyer unzips even
+    if a transport (e.g. a GitHub artifact download) stripped +x along the way.
+    """
+    import zipfile
+    for name, label, ok, _dur in results:
+        if not ok or not label.startswith("macos"):
+            continue
+        src = project_dir / "dist" / label
+        if not src.is_dir():
+            continue
+        zpath = project_dir / "dist" / f"{project_dir.name}-{label}.zip"
+        step(f"packaging dist/{label}/ -> {zpath.name}")
+        if dry:
+            continue
+        if zpath.exists():
+            zpath.unlink()
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for entry in sorted(src.iterdir()):
+                if entry.is_file():
+                    entry.chmod(entry.stat().st_mode | 0o755)   # runnable after unzip
+                zf.write(entry, arcname=entry.name)             # write() preserves the unix mode
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -554,6 +584,7 @@ def main() -> None:
         results.append((name, label, ok, _time.monotonic() - _t0))
 
     _package_linux(project_dir, results, args.dry_run)
+    _package_macos(project_dir, results, args.dry_run)
 
     banner("SUMMARY")
     if not results:
