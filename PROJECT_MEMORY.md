@@ -814,6 +814,15 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — Windows VM sizing, MEASURED. Bumping the win10_pro_x64_python
+  guest 4→16 vCPU (presented as 2 sockets × 8 cores — Win10 *client* caps at 2
+  sockets, and it ONLY onlines hot-added vCPUs after a reboot; RAM hot-applies)
+  cut Thrift's Windows build **36m53s → 21m02s (~43%, 1.75×)**. 4× cores ≠ 4×
+  speed: ~57% of the build is parallel C-compile, ~43% is a serial floor (Nuitka
+  analysis + link + onefile compression). **Sweet spot = 16 vCPU / 32 GB**:
+  jobs = `min(cpu, (RAM−4)/1.5, 32)` = min(16,18,32)=16, so 16 cores are fully
+  fed by 32 GB. 32 vCPU would need ~52 GB (most of the 62 GB host) for only ~4-5m
+  more — not worth it. Extrapolated Windows lane ~63m → ~37-40m.
 - 2026-06-19 — MILESTONE: first full cross-OS `build_projects.py` run, **9/9 green**.
   3 projects × {linux local, windows via SSH-to-VM (serial), macos via GitHub
   Actions (parallel)}. ~63m wall-clock vs ~148m fully serial (~2.3x from lane
