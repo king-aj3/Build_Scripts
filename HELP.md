@@ -265,11 +265,12 @@ Actions runner — Intel macOS is not built) need `gh_repo = "OWNER/REPO"` plus
 an authenticated `gh` CLI, and optionally `workflow`, `ref`, `artifact`. See
 `examples/build_hosts.template.toml` and `examples/macos-build.yml`.
 
-After every run, successful host outputs are auto-packaged (overwritten on
-re-runs): **linux** → `dist/<project>-<label>.tar.gz`, **macOS** →
-`dist/<project>-<label>.zip` (a raw Mach-O shows as 0 bytes on Gumroad and
-similar upload sites; the zip preserves the executable bit so it runs after
-unzip). **Windows** `.exe` is left as-is (uploads fine).
+After every run, successful host outputs are auto-packaged into a **`.zip` per
+OS** (`dist/<project>-<label>.zip`, overwritten on re-runs) — one consistent
+format. A raw binary (especially a macOS Mach-O) shows as **0 bytes** on Gumroad
+and similar upload sites, and the zip **preserves the executable bit** so
+linux/macOS binaries run after the buyer unzips. **Linux also gets a `.tar.gz`**
+(the native Linux format) alongside its zip; windows/macOS ship the zip only.
 
 ### Recipes
 

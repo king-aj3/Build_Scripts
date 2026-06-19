@@ -2,7 +2,7 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.1  (build.py)
-**Orchestrator:** build_all.py v1.2.4
+**Orchestrator:** build_all.py v1.2.5
 **Multi-project scheduler:** build_projects.py v1.2.0
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
 **Date:** 2026-06-19
@@ -80,6 +80,14 @@
   captures each job to `build-logs/<project>-<host>.log`; sequential streams
   each build live. `--only`, `--all --root DIR` discovery, and `--dry-run`
   round it out. Full usage in HELP.md / USER_GUIDE.
+
+## What's new in build_all.py 1.2.5
+
+- **Every OS deliverable is now a `.zip`** — windows and linux joined the macOS
+  zipping from 1.2.4, so customers get one consistent format (`dist/<project>-
+  <label>.zip`). The unix exec bit is preserved for linux/macOS binaries.
+- **Linux *also* keeps its `.tar.gz`** (the native Linux format) alongside the
+  zip — linux ships both. Windows/macOS ship the zip only.
 
 ## What's new in build_all.py 1.2.4
 
