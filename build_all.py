@@ -66,7 +66,7 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.2"
+ORCH_VERSION = "1.2.3"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
@@ -277,6 +277,9 @@ def build_local(name: str, host: dict, project_dir: Path, build_py: Path,
 
     # Collect: any top-level dist entry that is NOT a host-label dir is the
     # fresh artifact build.py just produced (dist/<name> or dist/<name>/).
+    # Skip *.tar.gz: those are OUR auto-generated packages (_package_linux);
+    # collecting a prior run's package would nest it into the new one and bloat
+    # the deliverable a little more each build. Nuitka never outputs a .tar.gz.
     if dry:
         return True
     dist = project_dir / "dist"
@@ -286,7 +289,7 @@ def build_local(name: str, host: dict, project_dir: Path, build_py: Path,
     target.mkdir(parents=True, exist_ok=True)
     moved = 0
     for entry in list(dist.iterdir()):
-        if entry.name in reserved or entry == target:
+        if entry.name in reserved or entry == target or entry.name.endswith(".tar.gz"):
             continue
         shutil.move(str(entry), str(target / entry.name))
         moved += 1

@@ -814,6 +814,13 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-19 — build_all.py v1.2.3: artifact collector now skips `*.tar.gz`.
+  Was sweeping the previous run's auto-package (`dist/<project>-<label>.tar.gz`)
+  into `dist/<label>/`, which `_package_linux` then re-tarred — nesting the old
+  package into the new one and bloating it every build. Found during the first
+  real `build_projects.py --only linux` run (3/3 green, ~14m wall vs ~23m serial
+  — lane-cap parallelism confirmed). Cleaned the nested tarballs + regenerated
+  clean packages (ajj3-brain 36→18M, WealthBuilder 239→80M, Thrift 445→149M).
 - 2026-06-19 — build.py v1.11.1: `report_repo_freshness` wired to gitutil.py
   (removes ~25 lines of inline _git/fetch/rev-list dup; output byte-identical;
   graceful `try/except ImportError` skip so a remote build host without gitutil

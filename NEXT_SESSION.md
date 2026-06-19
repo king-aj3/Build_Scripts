@@ -22,14 +22,19 @@
 - Docs updated (ABOUT/HELP/USER_GUIDE/PROJECT_MEMORY/CLAUDE).
 
 ## Current state
-- Branch: master. All 14 project repos clean + synced. sync_projects.py v1
-  (status + ff-pull) built, tested, working. build_projects.py regression-clean
-  after the projutil extraction.
+- Branch: master. sync_projects.py v1 (status + ff-pull) built, tested, working.
+- **build_projects.py validated for real on Linux** — `--only linux` built all 3
+  (ajj3-brain/WealthBuilder/Thrift_Reseller) to valid ELF onefiles, 3/3 green,
+  lane-cap parallelism confirmed (~14m vs ~23m serial).
+- **build_all.py v1.2.3** — fixed the collector so packages don't nest prior
+  tarballs; cleaned + regenerated the 3 Linux packages.
 
 ## Next task (the ONE thing)
-- **First real `build_projects.py` multi-OS build** (Linux-first as the safe
-  validation): `python build_projects.py --only linux`, then drop `--only linux`
-  for the full cross-OS run. Still unrun.
+- **Full cross-OS `build_projects.py` run** — the Linux-only pass is DONE (3/3
+  green, ~14m). Next: drop `--only linux` (`python build_projects.py`) to also
+  build Windows (SSH to the VM, serial) + macOS (GitHub Actions). Confirm the VM
+  is reachable and `gh` is authed first; this is the first real Windows+macOS
+  fan-out via the scheduler.
 
 ## Open questions / blockers
 - **sync write verbs (`--push`/`--commit`/`--merge`) are PARKED by decision

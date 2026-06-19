@@ -2,7 +2,7 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.1  (build.py)
-**Orchestrator:** build_all.py v1.2.2
+**Orchestrator:** build_all.py v1.2.3
 **Multi-project scheduler:** build_projects.py v1.2.0
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
 **Date:** 2026-06-19
@@ -80,6 +80,16 @@
   captures each job to `build-logs/<project>-<host>.log`; sequential streams
   each build live. `--only`, `--all --root DIR` discovery, and `--dry-run`
   round it out. Full usage in HELP.md / USER_GUIDE.
+
+## What's new in build_all.py 1.2.3
+
+- **Packaging no longer nests prior tarballs.** The local artifact collector
+  swept *every* loose `dist/` entry into `dist/<label>/` — including the
+  auto-generated `dist/<project>-<label>.tar.gz` from a previous run, which then
+  got re-tarred into the new package, bloating it a little more each build. The
+  collector now skips `*.tar.gz` (Nuitka never outputs one, so no real artifact
+  is lost). Surfaced by the first real `build_projects.py --only linux` run
+  (3/3 green); stale nested tarballs were cleaned and packages regenerated.
 
 ## What's new in build_all.py 1.2.2
 
