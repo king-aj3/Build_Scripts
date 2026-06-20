@@ -2,11 +2,41 @@
 
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.1  (build.py)
-**Orchestrator:** build_all.py v1.2.6
-**Multi-project scheduler:** build_projects.py v1.2.0
+**Orchestrator:** build_all.py v1.2.7
+**Multi-project scheduler:** build_projects.py v1.4.1
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
-**Date:** 2026-06-19
+**Date:** 2026-06-20
 **License:** Internal use
+
+## What's new — build_projects.py v1.2.1 → v1.4.1 + build_all.py v1.2.7 (2026-06-20)
+
+A focused session hardening the multi-project scheduler and the Windows build VM:
+
+- **v1.2.1 — `Ctrl-C` actually aborts a run.** The parallel scheduler used
+  `executor.shutdown(wait=True)`, which doesn't cancel queued jobs, so an interrupt
+  drained each lane's queue (the cap-1 Windows lane kept launching builds after the
+  SIGINT). Now `shutdown(wait=False, cancel_futures=True)` + a clean exit 130.
+- **v1.2.2 + build_all.py v1.2.7 — macOS skipped by default; Actions billing → SKIP.**
+  The product repos are private, so macOS Actions runs bill at 10x and the free quota
+  is finite; a bare run now builds only linux + windows (add `--only ...,macos` to
+  include it). A billing-blocked macOS run is reported as **SKIP**, not FAIL (build_all
+  detects the annotation + exits a dedicated skip code; build_projects maps it to a
+  tri-state `ok|fail|skip` result).
+- **v1.2.3 — `--windows-jobs N`.** The Windows lane cap is tunable; measured that the
+  single 16-vCPU/32GB VM handles 2 (and 3) concurrent Nuitka compiles fine (peak
+  ~12GB) — correcting the old "needs a 2nd VM" assumption.
+- **v1.3.0 — auto start/stop the Windows VM (libvirt).** A run that schedules a
+  windows job starts the VM if it's shut off (waits for SSH) and graceful-shuts it
+  down after all binaries are built + copied — but only if it started the VM (an
+  already-running VM is left up), leaving it up on a build failure for debugging.
+  Config in `build_projects.toml [windows_vm]`; `--no-manage-vm` skips.
+- **v1.4.0 → v1.4.1 — dynamic VM sizing, then defaulted OFF.** v1.4.0 resized the VM
+  per lane (vCPU + RAM) on cold-boot and capped per-build `--jobs`. A controlled
+  benchmark then showed growing vCPU is **~27% slower** on the 3990X (L3/CCD locality;
+  16 vCPU is the sweet spot), socket layout is irrelevant, and a job-cap is neutral —
+  so v1.4.1 ships `size_to_jobs=false` by default (the auto start/stop lifecycle
+  stays; the sizing code is kept but dormant). A fixed 16-vCPU VM + lane parallelism
+  is fastest (lane-2 ≈ 25 min, ~30% under sequential).
 
 ## What's new in 1.11.1 (build.py)
 

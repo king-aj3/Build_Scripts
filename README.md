@@ -150,6 +150,28 @@ runner) — see `USER_GUIDE.md` → "macOS without a Mac".
 
 ---
 
+## Build many projects at once
+
+`build_projects.py` runs `build_all.py` across **several projects × OSes** with a
+per-OS concurrency lane, so independent work overlaps:
+
+```bash
+python <Build_Scripts>/build_projects.py                   # the default set in build_projects.toml
+python <Build_Scripts>/build_projects.py --windows-jobs 2  # 2 concurrent Windows builds
+python <Build_Scripts>/build_projects.py --only linux,windows,macos
+```
+
+- **Lanes:** `windows = --windows-jobs` (default 1; one shared 16-vCPU VM is the
+  L3-locality sweet spot), `linux = --linux-jobs` (default 2), `macos = --mac-jobs`
+  (cloud — GitHub Actions does the compiling).
+- **macOS is skipped by default** (private-repo Actions billing); add `--only ...,macos`
+  to include it. A billing-blocked macOS run is reported as **SKIP**, not FAIL.
+- **Windows VM auto start/stop** (libvirt): the run starts the VM if it's shut off and
+  shuts it down afterward — only if it started it. See `HELP.md`.
+- `Ctrl-C` aborts the whole run cleanly.
+
+---
+
 ## Documentation
 
 | File                 | Purpose                                                |
@@ -170,12 +192,15 @@ runner) — see `USER_GUIDE.md` → "macOS without a Mac".
   - macOS via GitHub Actions (`transport = "github"`, arm64).
   - Windows native via SSH to the guest VM (`transport = "ssh"`, MSVC).
   - Linux local build + auto `.tar.gz` packaging.
+- **[done] Parallel build-matrix mode** — `build_projects.py` schedules N projects ×
+  OSes by per-OS lane: macOS in parallel (cloud runners), Linux RAM-bounded
+  (`--linux-jobs`), Windows by `--windows-jobs` (default 1; the shared 16-vCPU VM is
+  the L3-locality sweet spot, measured). Auto start/stops the Windows VM, skips macOS
+  by default (Actions billing), aborts cleanly on Ctrl-C.
 - **Code signing.** Unsigned binaries today; a `[codesign]` TOML section
   (Windows cert thumbprint, macOS developer ID) would close the gap.
-- **Parallel build-matrix mode.** Build N projects across OSes concurrently —
-  macOS dispatches in parallel (separate cloud runners), Linux RAM-bounded,
-  Windows serialized behind a lock (shared VM). Needs a scheduler above the
-  current per-project sequential host loop.
+- **Local macOS build host.** A small Apple-Silicon Mac (SSH host or self-hosted
+  runner) for native arm64 — avoids the GitHub Actions billing wall.
 
 ---
 
