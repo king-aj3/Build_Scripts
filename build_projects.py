@@ -97,7 +97,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.4.0"
+SCHED_VERSION = "1.4.1"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.

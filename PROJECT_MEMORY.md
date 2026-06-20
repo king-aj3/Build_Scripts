@@ -815,6 +815,20 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.4.1: **dynamic VM sizing DEFAULT OFF
+  (size_to_jobs=false) -- a benchmark showed vCPU growth HURTS on this host.**
+  Controlled experiment (WealthBuilder solo, --jobs 16, 32GB, cold): 16 vCPU(2x8)
+  =12m48s, 32 vCPU(2x16)=16m13s, 32 vCPU(1x32)=15m52s -> **more vCPU = ~27% SLOWER
+  for the same build** (L3/CCD locality on the 8-CCD 3990X: 16 threads stay in ~2
+  CCDs; 32 scatter, more cross-CCD L3 misses); **socket layout irrelevant**;
+  **cold-boot negligible** (≈ warm ~13m). And lane-2 on 16 vCPU: **jobs=8 (no
+  oversub) 25m22 ≈ jobs=16 (oversub) 25m23** -> job-cap is neutral (Thrift is
+  memory-bandwidth-bound, not CPU-bound). CONCLUSION: **16 vCPU is the sweet spot**;
+  a fixed VM + lane parallelism is fastest (lane-2 ~25m, ~30% < sequential ~36m).
+  v1.4.0's vCPU-growth premise was wrong for this hardware. Sizing code kept but
+  DORMANT -- flip size_to_jobs=true only where more vCPU actually helps. VM reset to
+  16 vCPU(2x8)/32GB. (Lesson stands: don't `virsh shutdown` a VM the owner is using
+  to test cold-start.)
 - 2026-06-20 — build_projects.py v1.4.0: **per-build job-cap + per-run dynamic VM
   sizing.** `--windows-jobs K` now, when it COLD-STARTS the VM, right-sizes it via
   `virt-xml` to `K*cores_per_build` vCPU (2-socket topology, set atomically with the

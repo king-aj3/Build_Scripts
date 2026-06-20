@@ -361,12 +361,13 @@ up on a windows-build failure** for debugging. Configure in `build_projects.toml
 skips it for one run; `--dry-run` shows the plan without touching the VM. `virsh`
 runs without sudo (libvirt group).
 
-When it **cold-starts** the VM it also **right-sizes** it to the run: `--windows-jobs K`
-boots it at `K x cores_per_build` vCPU (2-socket topology) and `K x mem_per_build_gb`
-GB (RAM capped to leave room for host + Linux), and runs each windows build with
-`--jobs cores_per_build` so K concurrent builds don't oversubscribe the cores.
-Defaults `cores_per_build = 16`, `mem_per_build_gb = 16` (K=2 → 32 vCPU/32 GB). A VM
-that is **already running is never resized**; set `size_to_jobs = false` for a fixed size.
+**Optional VM right-sizing (`size_to_jobs`, default OFF).** When enabled, a cold-start
+resizes the VM to `K x cores_per_build` vCPU / `K x mem_per_build_gb` GB and caps each
+build to `--jobs cores_per_build`. It's **off by default**: benchmarking on the 3990X
+showed growing vCPU is **~27% slower** per build (L3/CCD locality — 16 threads stay in
+~2 CCDs, 32 scatter), socket layout was irrelevant, and a jobs=8 cap matched jobs=16.
+**16 vCPU is the sweet spot** — a fixed VM + lane parallelism (`--windows-jobs`) is
+fastest (lane-2 ~25 min). Enable only on hardware where more vCPU actually helps.
 
 ### Recipes
 

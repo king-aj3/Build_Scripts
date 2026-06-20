@@ -32,13 +32,15 @@ ssh              = "ajenkins@192.168.122.195"  # probe target for "VM is up"
 connect          = "qemu:///system"            # libvirt URI
 boot_timeout     = 180                          # seconds to wait for SSH after start
 shutdown_timeout = 120                          # seconds to wait for graceful poweroff
-# Right-size the VM to the windows lane count (--windows-jobs) BEFORE cold-boot,
-# and cap each build's Nuitka --jobs to match, so K builds each get a full core
-# budget with NO oversubscription. VM gets K*cores_per_build vCPU (2-socket
-# topology) and K*mem_per_build_gb RAM (capped to leave room for host + linux).
-# mem default 16 is generous vs the ~6GB measured; raise it if a heavy-LTO build
-# hits a zstd 'not enough memory' error. Set size_to_jobs=false to keep a fixed
-# VM size (then concurrent lanes share the fixed cores).
-size_to_jobs     = true
-cores_per_build  = 16                            # vCPU + Nuitka --jobs per concurrent build
-mem_per_build_gb = 16                            # RAM (GB) per concurrent build
+# OPTIONAL VM right-sizing -- DEFAULT OFF. When true, the VM is resized on
+# cold-boot to K*cores_per_build vCPU (2-socket topology) / K*mem_per_build_gb RAM
+# and each build is capped to --jobs cores_per_build. OFF by default because
+# benchmarking on THIS host (3990X) showed growing vCPU is COUNTERPRODUCTIVE:
+# a 32-vCPU guest built ~27% slower than 16 (L3/CCD locality), socket layout was
+# irrelevant, and a jobs=8 cap matched jobs=16. 16 vCPU is the sweet spot -- a
+# fixed VM + lane parallelism (--windows-jobs) is fastest (lane-2 ~25m). Flip to
+# true only on hardware where more vCPU actually helps. (Auto start/stop above is
+# unaffected by this.)
+size_to_jobs     = false
+cores_per_build  = 16                            # only if size_to_jobs=true: vCPU + --jobs per build
+mem_per_build_gb = 16                            # only if size_to_jobs=true: RAM (GB) per build

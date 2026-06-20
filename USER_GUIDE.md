@@ -498,11 +498,11 @@ schedules a windows job will **start the libvirt VM if it's shut off** (waiting
 for SSH), then **shut it down after all windows binaries are built + copied** —
 but only if it started the VM (an already-running VM is left up), and it leaves
 the VM up on a windows-build failure for debugging. `--no-manage-vm` skips it;
-`--dry-run` shows the plan without acting. When it **cold-starts** the VM it also
-**right-sizes** it: `--windows-jobs K` boots K×`cores_per_build` vCPU /
-K×`mem_per_build_gb` GB and runs each build at `--jobs cores_per_build`, so
-concurrent lanes don't oversubscribe (defaults 16/16; an already-running VM is
-never resized; `size_to_jobs = false` keeps a fixed size).
+`--dry-run` shows the plan without acting. Optional VM right-sizing
+(`size_to_jobs`, **default off**) can resize the VM per lane on cold-start, but a
+benchmark showed growing vCPU is **~27% slower** on this host (L3 locality) — a
+fixed **16 vCPU** VM is the sweet spot, so it's off by default; enable only where
+more vCPU helps.
 
 The project list comes from (in order): positional args → `--all` discovery →
 the **default list** in `build_projects.toml`. So with no args it builds the
