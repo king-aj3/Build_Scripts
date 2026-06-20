@@ -487,7 +487,9 @@ overlaps while shared hosts stay serial:
   Windows jobs are serial **even across projects** (the long pole).
 - **linux = `--linux-jobs`** (default 2) — capped by RAM (LTO is heavy), tunable.
 - **macos = `--mac-jobs`** (default: # of projects) — GitHub Actions does the
-  compiling, so they all dispatch at once.
+  compiling, so they all dispatch at once. **Skipped by default** — a bare run
+  builds only linux + windows; add `--only ...,macos` to include it. A macOS run
+  declined for billing/quota is reported as **SKIP**, not FAIL.
 
 The project list comes from (in order): positional args → `--all` discovery →
 the **default list** in `build_projects.toml`. So with no args it builds the

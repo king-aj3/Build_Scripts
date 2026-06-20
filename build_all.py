@@ -66,10 +66,17 @@ except ImportError:                  # pragma: no cover
     except ImportError:
         _toml = None
 
-ORCH_VERSION = "1.2.6"
+ORCH_VERSION = "1.2.7"
 
 # Default arch label per host section name, used when [hosts.X].arch is absent.
 _DEFAULT_ARCH = {"linux": "x86_64", "windows": "amd64", "macos": "arm64"}
+
+# Exit code build_all uses when a host was SKIPPED -- not built, not failed (e.g.
+# a macOS GitHub Actions run declined for billing/quota). build_projects.py maps
+# this to a SKIP result instead of FAIL.
+_EXIT_SKIPPED = 3
+# Labels (e.g. "macos-arm64") skipped this run for billing/quota reasons.
+_BILLING_SKIPPED: set[str] = set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -377,6 +384,19 @@ def build_remote(name: str, host: dict, project_dir: Path, label: str,
     return run(scp, dry) == 0
 
 
+def _is_billing_block(gh_repo: str, run_id: str) -> bool:
+    """True if a failed run was DECLINED by GitHub for billing/spending-limit
+    reasons (the job never started) rather than failing during the build."""
+    try:
+        out = subprocess.run(["gh", "run", "view", run_id, "-R", gh_repo],
+                             capture_output=True, text=True, timeout=30)
+        t = (out.stdout + out.stderr).lower()
+        return ("spending limit" in t or "payments have failed" in t
+                or "was not started" in t)
+    except Exception:
+        return False
+
+
 def build_github(name: str, host: dict, project_dir: Path, label: str,
                  dry: bool) -> bool:
     """Dispatch a GitHub Actions workflow via `gh`, wait, download artifact."""
@@ -415,7 +435,14 @@ def build_github(name: str, host: dict, project_dir: Path, label: str,
     step(f"waiting on run {run_id} (this is the macOS compile — be patient)")
     if run(["gh", "run", "watch", run_id, "-R", gh_repo, "--exit-status"],
            dry) != 0:
-        warn(f"workflow run failed — see: gh run view {run_id} -R {gh_repo} --log")
+        if _is_billing_block(gh_repo, run_id):
+            _BILLING_SKIPPED.add(label)
+            warn("macOS not built -- GitHub Actions BILLING/QUOTA block; the job "
+                 "never started (private repo: macOS bills 10x, free quota spent). "
+                 "Not a code failure -- reported as SKIP. Build macOS locally or "
+                 "wait for the monthly quota reset.")
+        else:
+            warn(f"workflow run failed — see: gh run view {run_id} -R {gh_repo} --log")
         return False
 
     target = project_dir / "dist" / label
@@ -595,10 +622,16 @@ def main() -> None:
         sys.exit(1)
     for name, label, ok, dur in results:
         mm, ss = divmod(int(dur), 60)
-        say(f"  {'OK  ' if ok else 'FAIL'}  {name:<10} -> dist/{label}/   ({mm:d}m {ss:02d}s)")
-    failed = [r for r in results if not r[2]]
+        tag = "SKIP" if label in _BILLING_SKIPPED else ("OK  " if ok else "FAIL")
+        say(f"  {tag}  {name:<10} -> dist/{label}/   ({mm:d}m {ss:02d}s)")
+    failed = [r for r in results if not r[2] and r[1] not in _BILLING_SKIPPED]
+    built  = [r for r in results if r[2]]
     say("")
-    sys.exit(1 if failed else 0)
+    if failed:
+        sys.exit(1)
+    if _BILLING_SKIPPED and not built:
+        sys.exit(_EXIT_SKIPPED)   # nothing built, only skipped -> tell callers
+    sys.exit(0)
 
 
 if __name__ == "__main__":

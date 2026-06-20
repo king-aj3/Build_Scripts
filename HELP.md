@@ -345,6 +345,12 @@ serial **even across projects**), `linux = --linux-jobs` (this box has the
 cores; LTO eats RAM, so it's capped + tunable), `macos = --mac-jobs` (GitHub
 Actions does the compiling, so local cost is just polling).
 
+**macOS is skipped by default.** A bare `build_projects.py` builds only
+linux + windows; request macOS explicitly with `--only ...,macos`. Reason:
+macOS Actions runs bill at **10×** and the private-repo free quota is finite. If
+a macOS run is declined for billing/quota, it's reported as **SKIP** (not FAIL)
+and does **not** fail the build.
+
 ### Recipes
 
 | Goal                                   | Command                                                          |

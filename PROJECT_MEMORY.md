@@ -814,6 +814,18 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.2.2 + build_all.py v1.2.7: **macOS skipped by
+  default + graceful Actions billing handling.** The product repos are PRIVATE, so
+  macOS Actions runs bill at 10× and the free quota is spent; runs now fail in ~7s
+  with *"job was not started ... spending limit"*. Two changes: (1) a bare
+  `build_projects.py` builds only linux+windows (`_DEFAULT_SKIP_HOSTS={"macos"}`);
+  macOS only when named via `--only ...,macos` (warns when it auto-skips). (2)
+  build_all.py detects the billing annotation (`_is_billing_block`) and reports the
+  macOS host as **SKIP** not FAIL — new tri-state: build_all exits `_EXIT_SKIPPED=3`
+  when nothing built but a host was billing-skipped; build_projects maps rc==3 to a
+  "skip" Result (the `Result.ok` bool became `Result.status` ∈ ok|fail|skip).
+  Verified end-to-end: `ajj3-brain --only macos` → SKIP, exit 0. See
+  [[macos-actions-billing-blocked]]. Long-term fix = a local macOS build target.
 - 2026-06-20 — build_projects.py v1.2.1: **Ctrl-C now actually stops a run.** The
   parallel scheduler's `finally` called `executor.shutdown(wait=True)`, which does
   NOT cancel queued futures — so an interrupt drained each lane's queue instead of

@@ -51,6 +51,8 @@ OPTIONS
     --config PATH               Default project-list TOML (default: build_projects.toml).
     --parallel / --sequential   Overlap jobs by lane (default) or strictly serial.
     --only A,B                  Restrict to these OS hosts (linux,windows,macos).
+                                macOS is SKIPPED by default (Actions billing) --
+                                name it here to build it (linux,windows,macos).
     --linux-jobs N              Max concurrent Linux builds (default 2).
     --mac-jobs N                Max concurrent macOS builds (default: #projects).
                                 Windows is ALWAYS 1 (shared VM, OOM).
@@ -92,13 +94,22 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.2.1"
+SCHED_VERSION = "1.2.2"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
 _DEFAULT_LANE_CAP = 1
 
-Result = namedtuple("Result", "project host ok dur log")
+# Hosts a bare run (no --only) skips: macOS builds on GitHub Actions bill at 10x
+# and the private-repo free quota is spent, so routine runs don't attempt it --
+# ask for it explicitly with --only ...,macos.
+_DEFAULT_SKIP_HOSTS = {"macos"}
+
+# Exit code build_all.py uses to signal a host was SKIPPED (billing/quota): not
+# built and not failed. Mapped to a "skip" Result below.
+_EXIT_SKIPPED = 3
+
+Result = namedtuple("Result", "project host status dur log")  # status: ok|fail|skip
 _PRINT_LOCK = threading.Lock()
 
 
@@ -249,7 +260,7 @@ def run_job(project_dir: Path, host: str, build_all_py: Path,
         say("    $ " + " ".join(cmd) + (f"   (log: {logf})" if capture else ""))
 
     if dry:
-        return Result(project_dir.name, host, True, 0.0, logf)
+        return Result(project_dir.name, host, "ok", 0.0, logf)
 
     t0 = time.monotonic()
     if capture:
@@ -259,14 +270,19 @@ def run_job(project_dir: Path, host: str, build_all_py: Path,
     else:
         rc = subprocess.run(cmd).returncode          # stream live to console
     dur = time.monotonic() - t0
-    ok = rc == 0
+    status = ("ok" if rc == 0
+              else "skip" if rc == _EXIT_SKIPPED   # build_all: billing/quota skip
+              else "fail")
 
     with _PRINT_LOCK:
-        msg = f"{'DONE ' if ok else 'FAIL '} {label}  ({_fmt(dur)})"
-        if not ok and capture:
+        tag = {"ok": "DONE ", "skip": "SKIP ", "fail": "FAIL "}[status]
+        msg = f"{tag} {label}  ({_fmt(dur)})"
+        if status == "fail" and capture:
             msg += f"  -> {logf}"
+        elif status == "skip":
+            msg += "  (macOS Actions billing/quota -- not built)"
         step(msg)
-    return Result(project_dir.name, host, ok, dur, logf if capture else None)
+    return Result(project_dir.name, host, status, dur, logf if capture else None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,7 +359,8 @@ def main() -> None:
     mode.add_argument("--sequential", dest="parallel", action="store_false",
                       help="Run strictly one job at a time")
     ap.add_argument("--only", metavar="A,B",
-                    help="Restrict to these OS hosts (e.g. linux,macos)")
+                    help="Restrict to these OS hosts (e.g. linux,macos). macOS is "
+                         "skipped by default (Actions billing); name it here to build it.")
     ap.add_argument("--linux-jobs", type=int, default=2,
                     help="Max concurrent Linux builds (default 2)")
     ap.add_argument("--mac-jobs", type=int, default=None,
@@ -404,15 +421,26 @@ def main() -> None:
             "linux":   lane_cap("linux",   args.linux_jobs, mac_jobs),
             "macos":   lane_cap("macos",   args.linux_jobs, mac_jobs)}
 
-    # Build the (project, host) job list.
+    # Build the (project, host) job list. macOS is skipped unless asked for by
+    # name (--only ...,macos): its GitHub Actions runs bill at 10x and the
+    # private-repo free quota is spent, so a bare run shouldn't attempt it.
+    skipped_default: set[str] = set()
     jobs: list[tuple[Path, str]] = []
     for pd in projects:
         for host in enabled_hosts(pd):
-            if only and host not in only:
+            if only is not None:
+                if host not in only:
+                    continue
+            elif host in _DEFAULT_SKIP_HOSTS:
+                skipped_default.add(host)
                 continue
             jobs.append((pd, host))
     if not jobs:
         die("no jobs to run (check --only and each project's enabled hosts).")
+    if skipped_default:
+        warn(f"skipped by default (not requested via --only): "
+             f"{', '.join(sorted(skipped_default))} -- macOS is on GitHub Actions "
+             f"(billing/quota); add it with --only ...,macos when you want it.")
 
     log_dir = Path(args.log_dir).expanduser().resolve()
 
@@ -453,15 +481,20 @@ def main() -> None:
     width = max((len(f"{r.project}/{r.host}") for r in results), default=0)
     for pd in projects:
         for r in [r for r in results if r.project == pd.name]:
-            tag = "OK  " if r.ok else "FAIL"
-            extra = f"   -> {r.log}" if (not r.ok and r.log) else ""
+            tag = {"ok": "OK  ", "skip": "SKIP", "fail": "FAIL"}.get(r.status, "FAIL")
+            extra = f"   -> {r.log}" if (r.status == "fail" and r.log) else ""
             say(f"  {tag}  {f'{r.project}/{r.host}':<{width}}  ({_fmt(r.dur)}){extra}")
-    failed = [r for r in results if not r.ok]
+    failed  = [r for r in results if r.status == "fail"]
+    skipped = [r for r in results if r.status == "skip"]
+    ok_n    = sum(1 for r in results if r.status == "ok")
     say("")
-    say(f"  {len(results) - len(failed)}/{len(results)} job(s) OK   "
-        f"total wall-clock {_fmt(total)}")
+    say(f"  {ok_n}/{len(results)} job(s) OK"
+        + (f", {len(skipped)} skipped" if skipped else "")
+        + f"   total wall-clock {_fmt(total)}")
+    if skipped:
+        say("  SKIPPED: " + ", ".join(f"{r.project}/{r.host}" for r in skipped))
     if failed:
-        say(f"  FAILED: " + ", ".join(f"{r.project}/{r.host}" for r in failed))
+        say("  FAILED: " + ", ".join(f"{r.project}/{r.host}" for r in failed))
     sys.exit(1 if failed else 0)
 
 
