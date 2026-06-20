@@ -340,10 +340,11 @@ is taken as a sibling project dir; a project qualifies once it has its own
 | `--dry-run`              | Print the schedule; build nothing.                           |
 | `-- ...`                 | Everything after `--` is forwarded to `build_all.py` → `build.py`. |
 
-**Why lanes.** `windows = 1` (the shared build VM OOMs on concurrent compiles —
-serial **even across projects**), `linux = --linux-jobs` (this box has the
-cores; LTO eats RAM, so it's capped + tunable), `macos = --mac-jobs` (GitHub
-Actions does the compiling, so local cost is just polling).
+**Why lanes.** `windows = --windows-jobs` (default 1; one shared VM — but 2
+concurrent compiles were measured fine at 32GB, so `--windows-jobs 2` is safe for
+a ~30% speedup), `linux = --linux-jobs` (this box has the cores; LTO eats RAM, so
+it's capped + tunable), `macos = --mac-jobs` (GitHub Actions does the compiling,
+so local cost is just polling).
 
 **macOS is skipped by default.** A bare `build_projects.py` builds only
 linux + windows; request macOS explicitly with `--only ...,macos`. Reason:

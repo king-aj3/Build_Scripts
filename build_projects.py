@@ -14,7 +14,7 @@ serial -- even across different projects. Linux (this box) and macOS (GitHub
 Actions) have no such limit, so their jobs run in parallel. Modelled as three
 lanes, each with its own concurrency cap:
 
-    windows : 1            (shared VM -- concurrent builds OOM)
+    windows : --windows-jobs (default 1; shared VM, but 2 measured OK at 32GB)
     linux   : --linux-jobs (default 2; this box has the cores, LTO eats RAM)
     macos   : --mac-jobs   (default: #projects -- GitHub does the compiling)
 
@@ -55,7 +55,9 @@ OPTIONS
                                 name it here to build it (linux,windows,macos).
     --linux-jobs N              Max concurrent Linux builds (default 2).
     --mac-jobs N                Max concurrent macOS builds (default: #projects).
-                                Windows is ALWAYS 1 (shared VM, OOM).
+    --windows-jobs N            Max concurrent Windows builds (default 1; the
+                                shared VM handles 2 at ~32GB, measured). Raise
+                                with care -- concurrent compiles spike RAM.
     --all --root DIR            Build every dir under DIR that has a build_hosts.toml.
     --build-all PATH            Path to build_all.py (default: alongside this script).
     --log-dir DIR               Per-job logs in parallel mode (default: <cwd>/build-logs).
@@ -94,7 +96,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.2.2"
+SCHED_VERSION = "1.2.3"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -233,9 +235,9 @@ def cmd_remove_projects(config_path: Path, tokens: list[str]) -> None:
     step(f"{len(kept)} project(s) now in {config_path.name}")
 
 
-def lane_cap(host: str, linux_jobs: int, mac_jobs: int) -> int:
+def lane_cap(host: str, linux_jobs: int, mac_jobs: int, win_jobs: int) -> int:
     if host == "windows":
-        return 1                       # hard: shared VM, concurrent builds OOM
+        return max(1, win_jobs)        # shared VM; default 1, measured OK at 2 (32GB)
     if host == "linux":
         return max(1, linux_jobs)
     if host == "macos":
@@ -365,6 +367,9 @@ def main() -> None:
                     help="Max concurrent Linux builds (default 2)")
     ap.add_argument("--mac-jobs", type=int, default=None,
                     help="Max concurrent macOS builds (default: #projects)")
+    ap.add_argument("--windows-jobs", type=int, default=1,
+                    help="Max concurrent Windows builds (default 1; the shared VM "
+                         "handles 2 at ~32GB, measured). Raise with care -- OOM risk.")
     ap.add_argument("--build-all", metavar="PATH",
                     help="Path to build_all.py (default: alongside this script)")
     ap.add_argument("--log-dir", metavar="DIR", default="build-logs",
@@ -417,9 +422,9 @@ def main() -> None:
 
     only = {s.strip() for s in args.only.split(",")} if args.only else None
     mac_jobs = args.mac_jobs if args.mac_jobs is not None else len(projects)
-    caps = {"windows": lane_cap("windows", args.linux_jobs, mac_jobs),
-            "linux":   lane_cap("linux",   args.linux_jobs, mac_jobs),
-            "macos":   lane_cap("macos",   args.linux_jobs, mac_jobs)}
+    caps = {"windows": lane_cap("windows", args.linux_jobs, mac_jobs, args.windows_jobs),
+            "linux":   lane_cap("linux",   args.linux_jobs, mac_jobs, args.windows_jobs),
+            "macos":   lane_cap("macos",   args.linux_jobs, mac_jobs, args.windows_jobs)}
 
     # Build the (project, host) job list. macOS is skipped unless asked for by
     # name (--only ...,macos): its GitHub Actions runs bill at 10x and the

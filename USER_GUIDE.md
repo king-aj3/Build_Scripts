@@ -483,8 +483,9 @@ projects in one command, `build_projects.py` schedules every `(project × OS)`
 job by OS lane, each lane with its own concurrency cap, so independent work
 overlaps while shared hosts stay serial:
 
-- **windows = 1** — the build VM is shared; concurrent compiles OOM, so all
-  Windows jobs are serial **even across projects** (the long pole).
+- **windows = `--windows-jobs`** (default 1) — one shared VM. Default 1 is safe;
+  2 concurrent compiles were measured fine at 32GB, so `--windows-jobs 2` runs
+  two lanes for a ~30% Windows-lane speedup (the long pole).
 - **linux = `--linux-jobs`** (default 2) — capped by RAM (LTO is heavy), tunable.
 - **macos = `--mac-jobs`** (default: # of projects) — GitHub Actions does the
   compiling, so they all dispatch at once. **Skipped by default** — a bare run

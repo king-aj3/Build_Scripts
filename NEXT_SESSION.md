@@ -39,10 +39,11 @@
   Macs (workaround: right-click→Open, or `xattr -dr com.apple.quarantine`).
   Proper fix = code-signing + notarization (Apple Developer acct, ~$99/yr).
   Separate task if distributing macOS commercially.
-- **2nd Windows build VM** — Windows is the serial long pole of the cross-OS run
-  (one shared VM). A second VM would let `build_projects.py` raise the windows
-  lane cap to 2 and ~halve the critical path. Host has the cores; 32 GiB swap +
-  RAM support more concurrent VMs.
+- **Windows lane=2 — DONE (no 2nd VM needed).** 2026-06-20: measured two
+  concurrent Windows compiles on the single 32GB VM (peak ~12GB combined, ~20GB
+  free) — `build_projects.py --windows-jobs 2` runs two lanes for a ~30%
+  Windows-lane speedup. Default stays 1. (A 2nd VM or more RAM could push to 3+,
+  but isn't necessary for 2.)
 - `llm-from-scratch` was intentionally retired (OBE by ajj3-brain) — don't flag
   its local absence as lost work.
 

@@ -739,9 +739,10 @@ project you weren't even thinking about. Design decisions and their reasons:
     so N projects' macOS builds finish in ~one build's time.
   - **Linux: RAM-bounded** (`--linux-jobs`, default 2). One Threadripper; LTO
     multiplies peak RAM, so concurrency is capped + tunable, not core-bound.
-  - **Windows: strictly serial** (lane cap hard-wired to 1). One shared VM —
-    concurrent compiles OOM — so every Windows job queues behind one lane, even
-    across projects. The genuine long pole; everything else finishes before it.
+  - **Windows: `--windows-jobs` (default 1).** One shared VM; default stays 1 for
+    safety, but **2 concurrent compiles were MEASURED fine at 32GB** (2026-06-20:
+    WB+Thrift together, peak ~12GB combined, ~20GB free) -- `--windows-jobs 2`
+    runs two lanes for a ~30% Windows-lane speedup. No 2nd VM needed.
   `--sequential` runs one job at a time (streams live); `--parallel` (default)
   captures each to `build-logs/<project>-<host>.log`. The cross-process *lock*
   this item worried about turned out unnecessary: a single scheduler process
@@ -814,6 +815,15 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.2.3: **`--windows-jobs N` (default 1) — lane=2
+  works on the single VM.** Earlier notes assumed two concurrent Windows compiles
+  would OOM / need a 2nd VM (~52GB). MEASURED otherwise: WealthBuilder + Thrift
+  windows built concurrently on the 16 vCPU / 32GB VM, **peak only ~12GB combined
+  (min ~20GB free), both OK** — wall-clock ~25m vs ~36m serial (~30% faster). Added
+  `--windows-jobs` (lane_cap gained a `win_jobs` arg); default 1 keeps current
+  behavior. Corrected the "needs a 2nd VM" claim here + in NEXT_SESSION. Note: each
+  build still requests jobs=16, so 2 lanes oversubscribe the 16 cores (hence ~30%,
+  not 2×); capping per-build jobs could tune that later.
 - 2026-06-20 — build_projects.py v1.2.2 + build_all.py v1.2.7: **macOS skipped by
   default + graceful Actions billing handling.** The product repos are PRIVATE, so
   macOS Actions runs bill at 10× and the free quota is spent; runs now fail in ~7s
@@ -865,7 +875,9 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   dist/<os-arch>/. Swap held at 189MiB/31GiB peak under the heaviest concurrent
   load. NOTE: a 2nd Windows build VM would let windows lane cap go to 2 and ~halve
   the critical path — the obvious next throughput win (the 32GiB swap already
-  supports more concurrent VMs).
+  supports more concurrent VMs). [SUPERSEDED 2026-06-20: no 2nd VM needed — the
+  single 32GB VM runs lane=2 fine (measured); see the 2026-06-20 changelog +
+  `--windows-jobs`.]
 - 2026-06-19 — build_all.py v1.2.3: artifact collector now skips `*.tar.gz`.
   Was sweeping the previous run's auto-package (`dist/<project>-<label>.tar.gz`)
   into `dist/<label>/`, which `_package_linux` then re-tarred — nesting the old
