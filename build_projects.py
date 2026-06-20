@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import os
 import platform
 import subprocess
 import sys
@@ -96,7 +97,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.3.0"
+SCHED_VERSION = "1.4.0"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -273,15 +274,69 @@ def _vm_reachable(ssh_target: str) -> bool:
         return False
 
 
-def vm_ensure_up(vm: dict) -> bool:
+def _host_ram_gb() -> int:
+    """Total host RAM in GB (0 if unknown)."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // (1024 * 1024)
+    except Exception:
+        pass
+    return 0
+
+
+def vm_resize(vm: dict, lanes: int) -> None:
+    """Size the VM's vCPU + RAM to the windows lane count BEFORE cold-boot, so K
+    concurrent builds each get a full core budget with no oversubscription. vCPU
+    and topology are set atomically (Win10 caps at 2 sockets); RAM is capped to
+    leave headroom for the host + Linux builds. Best-effort: on any virt-xml
+    error it warns and leaves the existing size."""
+    cpb = int(vm.get("cores_per_build", 16))
+    mpb = int(vm.get("mem_per_build_gb", 16))
+    vcpu = max(2, cpb * lanes)
+    if vcpu % 2:
+        vcpu += 1                                    # even -> clean 2-socket split
+    host_threads = os.cpu_count() or vcpu
+    if vcpu > host_threads:
+        vcpu = host_threads - (host_threads % 2)
+    mem_gb = mpb * lanes
+    host_ram = _host_ram_gb()
+    if host_ram:
+        cap = max(8, host_ram - 20)                  # ~20 GB for host + linux builds
+        if mem_gb > cap:
+            warn(f"windows VM RAM {mem_gb}GB for {lanes} lane(s) exceeds the host "
+                 f"budget (~{cap}GB of {host_ram}GB); capping to {cap}GB.")
+            mem_gb = cap
+    domain, connect = vm["domain"], vm.get("connect", "qemu:///system")
+    cores, mib = vcpu // 2, mem_gb * 1024
+    step(f"sizing VM '{domain}' -> {vcpu} vCPU (2x{cores}) / {mem_gb}GB "
+         f"for {lanes} windows lane(s)")
+    r1 = subprocess.run(["virt-xml", "--connect", connect, domain, "--edit",
+                         "--vcpus", f"{vcpu},maxvcpus={vcpu},sockets=2,"
+                                    f"cores={cores},threads=1"],
+                        capture_output=True, text=True)
+    r2 = subprocess.run(["virt-xml", "--connect", connect, domain, "--edit",
+                         "--memory", f"{mib},currentMemory={mib}"],
+                        capture_output=True, text=True)
+    if r1.returncode != 0 or r2.returncode != 0:
+        warn(f"VM resize did not fully apply (vcpu rc={r1.returncode}, mem "
+             f"rc={r2.returncode}); starting with existing size. "
+             f"{(r1.stderr or '').strip()} {(r2.stderr or '').strip()}")
+
+
+def vm_ensure_up(vm: dict, lanes: int) -> bool:
     """Make sure the Windows VM is running and SSH-reachable before windows jobs.
 
     Returns True ONLY if we started it (caller then owns shutting it down); a VM
     that was already running is left alone. Aborts the run if it can't come up."""
     domain = vm["domain"]
     if _vm_state(vm) == "running":
-        step(f"windows VM '{domain}' already running -- will leave it up")
+        step(f"windows VM '{domain}' already running -- will leave it up "
+             f"(not resizing a running VM)")
         return False
+    if vm.get("size_to_jobs", True):
+        vm_resize(vm, lanes)
     step(f"windows VM '{domain}' not running -- starting it")
     if _virsh(vm, "start", domain).returncode != 0:
         die(f"could not start windows VM '{domain}' (virsh start failed). "
@@ -320,11 +375,14 @@ def vm_shutdown(vm: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 def run_job(project_dir: Path, host: str, build_all_py: Path,
             passthrough: list[str], log_dir: Path, capture: bool,
-            dry: bool) -> Result:
+            dry: bool, win_jobs: int | None = None) -> Result:
     label = f"{project_dir.name}/{host}"
     cmd = [sys.executable, str(build_all_py), str(project_dir), "--only", host]
-    if passthrough:
-        cmd += ["--"] + passthrough
+    extra = list(passthrough)
+    if host == "windows" and win_jobs and "--jobs" not in extra:
+        extra += ["--jobs", str(win_jobs)]      # cap Nuitka jobs to this lane's cores
+    if extra:
+        cmd += ["--"] + extra
     logf = log_dir / f"{project_dir.name}-{host}.log"
 
     with _PRINT_LOCK:
@@ -360,13 +418,13 @@ def run_job(project_dir: Path, host: str, build_all_py: Path,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Scheduling
 # ─────────────────────────────────────────────────────────────────────────────
-def schedule_sequential(jobs, build_all_py, passthrough, log_dir, dry):
+def schedule_sequential(jobs, build_all_py, passthrough, log_dir, dry, win_jobs=None):
     """Strictly one job at a time; stream each build live to the console."""
     return [run_job(p, h, build_all_py, passthrough, log_dir,
-                    capture=False, dry=dry) for p, h in jobs]
+                    capture=False, dry=dry, win_jobs=win_jobs) for p, h in jobs]
 
 
-def schedule_parallel(jobs, caps, build_all_py, passthrough, log_dir, dry):
+def schedule_parallel(jobs, caps, build_all_py, passthrough, log_dir, dry, win_jobs=None):
     """One thread-pool lane per host; lane size = that host's concurrency cap.
 
     Output is captured per-job (a tangle of N live builds is unreadable), and a
@@ -380,7 +438,7 @@ def schedule_parallel(jobs, caps, build_all_py, passthrough, log_dir, dry):
     try:
         for p, h in jobs:
             futs[lanes[h].submit(run_job, p, h, build_all_py, passthrough,
-                                 log_dir, True, dry)] = (p, h)
+                                 log_dir, True, dry, win_jobs)] = (p, h)
         results = []
         for fut in cf.as_completed(futs):
             results.append(fut.result())
@@ -526,6 +584,8 @@ def main() -> None:
     windows_scheduled = any(h == "windows" for _, h in jobs)
     manage_vm = (bool(vm_cfg.get("manage")) and bool(vm_cfg.get("domain"))
                  and windows_scheduled and not args.no_manage_vm)
+    size_to_jobs = manage_vm and bool(vm_cfg.get("size_to_jobs", True))
+    win_jobs = int(vm_cfg.get("cores_per_build", 16)) if size_to_jobs else None
 
     log_dir = Path(args.log_dir).expanduser().resolve()
 
@@ -539,6 +599,10 @@ def main() -> None:
         f"linux={caps['linux']}  macos={caps['macos']}")
     if manage_vm:
         say(f"  win VM    : auto start/stop '{vm_cfg['domain']}' (manage)")
+        if size_to_jobs:
+            say(f"  win sizing: {caps['windows']} lane(s) x "
+                f"{vm_cfg.get('cores_per_build', 16)} vCPU / "
+                f"{vm_cfg.get('mem_per_build_gb', 16)}GB; --jobs {win_jobs}/build")
     if args.parallel:
         say(f"  logs      : {log_dir}/<project>-<host>.log")
     say(f"  passthru  : {' '.join(passthrough) or '(none)'}")
@@ -548,17 +612,18 @@ def main() -> None:
         say(f"    - {pd.name:<20} {', '.join(hs)}")
 
     # Bring the Windows VM up (start it if shut off) before any windows build.
-    started_vm = vm_ensure_up(vm_cfg) if (manage_vm and not args.dry_run) else False
+    started_vm = (vm_ensure_up(vm_cfg, caps['windows'])
+                  if (manage_vm and not args.dry_run) else False)
 
     # Run.
     t0 = time.monotonic()
     try:
         if args.parallel:
             results = schedule_parallel(jobs, caps, build_all_py, passthrough,
-                                        log_dir, args.dry_run)
+                                        log_dir, args.dry_run, win_jobs)
         else:
             results = schedule_sequential(jobs, build_all_py, passthrough,
-                                          log_dir, args.dry_run)
+                                          log_dir, args.dry_run, win_jobs)
     except KeyboardInterrupt:
         with _PRINT_LOCK:
             warn("interrupted -- queued jobs cancelled; "

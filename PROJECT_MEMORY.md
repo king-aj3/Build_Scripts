@@ -815,6 +815,26 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.4.0: **per-build job-cap + per-run dynamic VM
+  sizing.** `--windows-jobs K` now, when it COLD-STARTS the VM, right-sizes it via
+  `virt-xml` to `K*cores_per_build` vCPU (2-socket topology, set atomically with the
+  vcpu count -- separate edits fail on Win10's topology check) and
+  `K*mem_per_build_gb` RAM, and passes `--jobs cores_per_build` to each windows
+  build (build.py honors an explicit --jobs as-is) -- so K builds each get a full
+  core budget with NO oversubscription. Defaults cores_per_build=16, mem_per_build_gb
+  =16 (K=2 → 32vcpu/32GB; K=1 → 16vcpu/16GB); RAM capped to host-20GB. A VM that is
+  **already running is never resized or shut down** (only a VM we cold-start);
+  virt-xml errors are non-fatal. Config [windows_vm].{size_to_jobs(default true),
+  cores_per_build,mem_per_build_gb}. Rationale (measured): host=62GB RAM (the
+  ceiling) / 128 threads (abundant); each build peaks ~6GB; CPU over-alloc is cheap
+  → give each build full cores, scale vCPU with lanes, RAM-bounded → one right-sized
+  VM beats many. VERIFIED: resize round-trips (host-passthrough preserved), feature
+  fires resize on cold-start (→16vcpu/16GB, started, SSH up), --jobs passthrough
+  (dry-run), compile. NOT re-run to build-completion (owner asked to leave the VM
+  running); build-completion + post-build shutdown rely on the v1.3.0 lifecycle test.
+  NOTE/LESSON: the dev's *test harnesses* (not the feature) repeatedly cold-cycled a
+  VM the owner was keeping up -- don't `virsh shutdown` a running VM to test the
+  cold-start path without asking.
 - 2026-06-20 — build_projects.py v1.3.0: **auto start/stop the Windows build VM.**
   When a windows job is scheduled, the scheduler starts the libvirt VM
   (`win10_pro_x64_python`) if it's shut off — `virsh start` then polls SSH until

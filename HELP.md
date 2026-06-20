@@ -361,6 +361,13 @@ up on a windows-build failure** for debugging. Configure in `build_projects.toml
 skips it for one run; `--dry-run` shows the plan without touching the VM. `virsh`
 runs without sudo (libvirt group).
 
+When it **cold-starts** the VM it also **right-sizes** it to the run: `--windows-jobs K`
+boots it at `K x cores_per_build` vCPU (2-socket topology) and `K x mem_per_build_gb`
+GB (RAM capped to leave room for host + Linux), and runs each windows build with
+`--jobs cores_per_build` so K concurrent builds don't oversubscribe the cores.
+Defaults `cores_per_build = 16`, `mem_per_build_gb = 16` (K=2 → 32 vCPU/32 GB). A VM
+that is **already running is never resized**; set `size_to_jobs = false` for a fixed size.
+
 ### Recipes
 
 | Goal                                   | Command                                                          |

@@ -4,7 +4,7 @@
 > Next session on any machine: `git pull`, open this folder in Claude Code, ask Claude to read CLAUDE.md + NEXT_SESSION.md and continue.
 
 ## Last worked: 2026-06-20 on Linux Threadripper (home) — big build_projects session
-## What I just did (build_projects.py 1.2.0 → 1.3.0; build_all.py 1.2.6 → 1.2.7)
+## What I just did (build_projects.py 1.2.0 → 1.4.0; build_all.py 1.2.6 → 1.2.7)
 - **v1.2.1** — Ctrl-C now actually aborts a run (`shutdown(wait=False,
   cancel_futures=True)`); clean exit 130, no traceback. (Was draining the cap-1
   windows queue and finishing builds after the interrupt.)
@@ -20,29 +20,30 @@
   binaries built+copied — only if it started the VM; leave up on failure / clean
   up on Ctrl-C; never force. Config `build_projects.toml [windows_vm]`;
   `--no-manage-vm` skips. Verified both paths (already-running→up; off→start/stop).
+- **v1.4.0** — per-build **job-cap + dynamic VM sizing**. On cold-start, `virt-xml`
+  right-sizes the VM to `K*cores_per_build` vCPU (2-socket) / `K*mem_per_build_gb`
+  GB and each build runs `--jobs cores_per_build` → no oversubscription. Defaults
+  16/16. **Never resizes/stops an already-running VM.** size_to_jobs default ON.
 - All committed + pushed to master.
 
 ## Current state
-- Branch master; **build_projects.py v1.3.0, build_all.py v1.2.7 — committed + pushed.**
-- Windows lane: ONE VM, `--windows-jobs 2` is the practical sweet spot (lane=3
-  safe but ~no gain for the 1-light + 2-heavy mix); VM auto start/stop in place.
+- Branch master; **build_projects.py v1.4.0, build_all.py v1.2.7 — committed + pushed.**
+- Windows lane: ONE VM, `--windows-jobs 2` is the practical sweet spot; auto
+  start/stop + per-run sizing (16 vCPU/16GB per lane) + `--jobs` cap in place.
 - All linux + windows binaries current. macOS waits on quota reset or a local Mac.
 - Host measured: 3990X 128T / **62GB RAM = the ceiling**; each heavy build peaks
-  ~6GB / wants ~8 cores → one right-sized VM beats multiple small VMs.
-- VM currently shut off (lifecycle test left it off — it now starts on demand).
+  ~6GB → one right-sized VM beats multiple small VMs.
+- VM currently **running at 16 vCPU / 16 GB** (a dynamic-sizing test left it there;
+  owner chose to leave it). Next managed cold-start re-sizes per --windows-jobs.
 
 ## Next task (the ONE thing)
 - **Nothing pressing.** Optional follow-ons below.
 
 ## Open questions / parked / optional
-- **Per-build Nuitka job-cap (optional tuning)** — cap each windows build's
-  `--jobs` to vCPU÷lanes so concurrent lanes don't oversubscribe the cores
-  (currently each build asks for jobs=16, so lane=2 runs 32 threads on 16 vCPU).
-  Would tune lane=2/3 a bit. Pass `--jobs` through build_all→build.py. Not done.
-- **Per-run dynamic VM sizing (optional)** — size the VM's vCPU/RAM to
-  `--windows-jobs` before cold-boot via `virsh setvcpus/setmaxmem --config`
-  (cold boot picks up new sizing; Win10 needs a 2-socket topology for big counts).
-  Useful if workloads grow heavier. Not done.
+- **Per-build job-cap + dynamic VM sizing — DONE (v1.4.0).** Defaults
+  cores_per_build=16 / mem_per_build_gb=16, size_to_jobs ON. Not yet exercised to
+  full build-completion (owner asked to leave the running VM alone); a clean
+  end-to-end run is fine whenever a cold-cycle is OK.
 - **Local macOS build target** — a used Apple-Silicon Mac mini (16GB, ~$450-550)
   as an SSH host or self-hosted runner = native arm64, **zero Actions minutes**.
   The real macOS fix vs. the billing block. (Docker/VM can't do arm64 on x86_64.)
