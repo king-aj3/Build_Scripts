@@ -12,6 +12,7 @@ Public API:
     discover_projects(root)            -> list[Path]   (dirs with build_hosts.toml)
     load_default_projects(config_path) -> list[Path]   (resolved build_projects.toml set)
     read_raw_projects(config_path)     -> list[str]    (verbatim stored entries)
+    read_windows_vm(config_path)       -> dict         ([windows_vm] table, or {})
     resolve_stored(entry, config_dir)  -> Path
     normalize_token(token, config_dir) -> (abs_path, stored_form)
     write_projects(config_path, entries)               (rewrite the array, keep comments)
@@ -80,6 +81,16 @@ def read_raw_projects(config_path: Path) -> list[str]:
         _die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
     with open(config_path, "rb") as fh:
         return [str(e) for e in _toml.load(fh).get("projects", [])]
+
+
+def read_windows_vm(config_path: Path) -> dict:
+    """The [windows_vm] table (auto start/stop the Windows build VM), or {}."""
+    if not config_path.is_file():
+        return {}
+    if _toml is None:
+        _die("No TOML reader. Use Python 3.11+ or `pip install tomli`.")
+    with open(config_path, "rb") as fh:
+        return dict(_toml.load(fh).get("windows_vm", {}))
 
 
 def resolve_stored(entry: str, config_dir: Path) -> Path:

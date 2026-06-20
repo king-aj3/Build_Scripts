@@ -17,3 +17,18 @@ projects = [
     "../WealthBuilder",
     "../Thrift_Reseller",
 ]
+
+# ── Windows build VM (libvirt) auto start/stop ──────────────────────────────
+# When a windows job is scheduled, build_projects.py starts this VM if it's shut
+# off (waiting for SSH), runs the windows build(s), then shuts it down AFTER all
+# binaries are built + copied back -- but ONLY if it started the VM (a VM that
+# was already running is left running). Graceful shutdown only; never forced. On
+# a windows-build failure the VM is left UP for debugging. virsh runs without
+# sudo (libvirt group). Skip for one run with --no-manage-vm.
+[windows_vm]
+manage           = true
+domain           = "win10_pro_x64_python"      # libvirt domain (virsh list --all)
+ssh              = "ajenkins@192.168.122.195"  # probe target for "VM is up"
+connect          = "qemu:///system"            # libvirt URI
+boot_timeout     = 180                          # seconds to wait for SSH after start
+shutdown_timeout = 120                          # seconds to wait for graceful poweroff

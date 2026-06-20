@@ -352,6 +352,15 @@ macOS Actions runs bill at **10×** and the private-repo free quota is finite. I
 a macOS run is declined for billing/quota, it's reported as **SKIP** (not FAIL)
 and does **not** fail the build.
 
+**Windows VM auto start/stop.** When a windows job is scheduled, the scheduler
+starts the libvirt build VM if it's shut off (waits for SSH), then gracefully
+shuts it down after all windows binaries are built and copied back — but **only
+if it started the VM** (one already running is left up), and it **leaves the VM
+up on a windows-build failure** for debugging. Configure in `build_projects.toml`
+`[windows_vm]` (`manage`, `domain`, `ssh`, `connect`, timeouts); `--no-manage-vm`
+skips it for one run; `--dry-run` shows the plan without touching the VM. `virsh`
+runs without sudo (libvirt group).
+
 ### Recipes
 
 | Goal                                   | Command                                                          |

@@ -815,6 +815,22 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.3.0: **auto start/stop the Windows build VM.**
+  When a windows job is scheduled, the scheduler starts the libvirt VM
+  (`win10_pro_x64_python`) if it's shut off — `virsh start` then polls SSH until
+  reachable (aborts after `boot_timeout`) — and gracefully `virsh shutdown`s it
+  after all windows binaries are built + copied. SAFETY: only shuts down a VM **it
+  started** (an already-running VM is left up); on a windows-build FAILURE it
+  leaves the VM up for debugging; cleans up on Ctrl-C; never force-`destroy`.
+  Config in build_projects.toml `[windows_vm]` (domain/ssh/connect/timeouts,
+  `manage=true`); `--no-manage-vm` skips; `--dry-run` shows the plan without
+  acting. `virsh -c qemu:///system` runs without sudo (libvirt group). Helper
+  `read_windows_vm` added to projutil.py. Verified end-to-end: already-running →
+  left up; shut-off → started, built, shut off. See [[macos-actions-billing-blocked]].
+  Follow-ons (not done): per-build Nuitka `--jobs` cap = vCPU÷lanes to avoid
+  oversubscription; per-run dynamic VM sizing (set vCPU/RAM to `--windows-jobs`
+  before cold-boot). Host measured: 3990X 128T / 62GB RAM (RAM is the ceiling);
+  each heavy build peaks ~6GB / wants ~8 cores, so one right-sized VM beats many.
 - 2026-06-20 — build_projects.py v1.2.3: **`--windows-jobs N` (default 1) — lane=2
   works on the single VM.** Earlier notes assumed two concurrent Windows compiles
   would OOM / need a 2nd VM (~52GB). MEASURED otherwise: WealthBuilder + Thrift

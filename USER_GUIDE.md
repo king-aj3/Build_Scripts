@@ -492,6 +492,14 @@ overlaps while shared hosts stay serial:
   builds only linux + windows; add `--only ...,macos` to include it. A macOS run
   declined for billing/quota is reported as **SKIP**, not FAIL.
 
+**Windows VM auto start/stop.** With a `[windows_vm]` table in
+`build_projects.toml` (`manage = true`, `domain`, `ssh`, ...), a run that
+schedules a windows job will **start the libvirt VM if it's shut off** (waiting
+for SSH), then **shut it down after all windows binaries are built + copied** —
+but only if it started the VM (an already-running VM is left up), and it leaves
+the VM up on a windows-build failure for debugging. `--no-manage-vm` skips it;
+`--dry-run` shows the plan without acting.
+
 The project list comes from (in order): positional args → `--all` discovery →
 the **default list** in `build_projects.toml`. So with no args it builds the
 curated set, which you **manage with CLI commands** (no hand-editing):

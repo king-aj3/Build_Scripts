@@ -88,7 +88,7 @@ except ImportError:                  # pragma: no cover
 # Shared project-selection + build_projects.toml CRUD (aliased to the original
 # private names so call sites below are unchanged). Same dir as this script.
 from projutil import (
-    discover_projects, load_default_projects,
+    discover_projects, load_default_projects, read_windows_vm,
     split_csv as _split_csv,
     read_raw_projects as _read_raw_projects,
     resolve_stored as _resolve_stored,
@@ -96,7 +96,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.2.3"
+SCHED_VERSION = "1.3.0"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -246,6 +246,76 @@ def lane_cap(host: str, linux_jobs: int, mac_jobs: int, win_jobs: int) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Windows build VM lifecycle (libvirt) -- start before / stop after windows jobs
+# ─────────────────────────────────────────────────────────────────────────────
+def _virsh(vm: dict, *args: str) -> subprocess.CompletedProcess:
+    connect = vm.get("connect", "qemu:///system")          # virsh works w/o sudo
+    return subprocess.run(["virsh", "-c", connect, *args],
+                          capture_output=True, text=True, timeout=30)
+
+
+def _vm_state(vm: dict) -> str:
+    """libvirt domain state ('running' / 'shut off' / ...); '' on error."""
+    try:
+        return _virsh(vm, "domstate", vm["domain"]).stdout.strip()
+    except Exception:
+        return ""
+
+
+def _vm_reachable(ssh_target: str) -> bool:
+    """True if the VM answers SSH (key auth, no prompt)."""
+    try:
+        return subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+             ssh_target, "echo ok"],
+            capture_output=True, text=True, timeout=20).returncode == 0
+    except Exception:
+        return False
+
+
+def vm_ensure_up(vm: dict) -> bool:
+    """Make sure the Windows VM is running and SSH-reachable before windows jobs.
+
+    Returns True ONLY if we started it (caller then owns shutting it down); a VM
+    that was already running is left alone. Aborts the run if it can't come up."""
+    domain = vm["domain"]
+    if _vm_state(vm) == "running":
+        step(f"windows VM '{domain}' already running -- will leave it up")
+        return False
+    step(f"windows VM '{domain}' not running -- starting it")
+    if _virsh(vm, "start", domain).returncode != 0:
+        die(f"could not start windows VM '{domain}' (virsh start failed). "
+            f"Fix the VM, or re-run with --no-manage-vm / --only linux.")
+    ssh_target = vm.get("ssh")
+    timeout = int(vm.get("boot_timeout", 180))
+    step(f"waiting up to {timeout}s for '{domain}' to answer SSH ({ssh_target})")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ssh_target and _vm_reachable(ssh_target):
+            step(f"windows VM '{domain}' is up")
+            return True
+        time.sleep(5)
+    die(f"windows VM '{domain}' did not answer SSH within {timeout}s -- aborting "
+        f"(re-run with --no-manage-vm once it's up, or --only linux).")
+
+
+def vm_shutdown(vm: dict) -> None:
+    """Gracefully shut the Windows VM down and wait until off. Never forces."""
+    domain = vm["domain"]
+    timeout = int(vm.get("shutdown_timeout", 120))
+    step(f"shutting down windows VM '{domain}' (graceful, up to {timeout}s)")
+    _virsh(vm, "shutdown", domain)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _vm_state(vm) == "shut off":
+            step(f"windows VM '{domain}' is shut off")
+            return
+        time.sleep(5)
+    warn(f"windows VM '{domain}' did not power off within {timeout}s; left as-is "
+         f"(not forcing). Check: virsh domstate {domain}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  One (project, host) job  ->  build_all.py <project> --only <host>
 # ─────────────────────────────────────────────────────────────────────────────
 def run_job(project_dir: Path, host: str, build_all_py: Path,
@@ -375,6 +445,9 @@ def main() -> None:
     ap.add_argument("--log-dir", metavar="DIR", default="build-logs",
                     help="Per-job logs in parallel mode (default: ./build-logs)")
     ap.add_argument("--dry-run", action="store_true", help="Print schedule; build nothing")
+    ap.add_argument("--no-manage-vm", action="store_true",
+                    help="Don't auto start/stop the Windows VM (overrides "
+                         "[windows_vm].manage in build_projects.toml)")
     args = ap.parse_args(argv)
 
     config_path = (Path(args.config).expanduser() if args.config
@@ -447,6 +520,13 @@ def main() -> None:
              f"{', '.join(sorted(skipped_default))} -- macOS is on GitHub Actions "
              f"(billing/quota); add it with --only ...,macos when you want it.")
 
+    # Windows VM lifecycle: start it before windows builds and stop it after (only
+    # if a windows job is scheduled). Config in build_projects.toml [windows_vm].
+    vm_cfg = read_windows_vm(config_path)
+    windows_scheduled = any(h == "windows" for _, h in jobs)
+    manage_vm = (bool(vm_cfg.get("manage")) and bool(vm_cfg.get("domain"))
+                 and windows_scheduled and not args.no_manage_vm)
+
     log_dir = Path(args.log_dir).expanduser().resolve()
 
     # Plan banner.
@@ -457,6 +537,8 @@ def main() -> None:
     say(f"  build_all : {build_all_py}")
     say(f"  lane caps : windows={caps['windows']} (shared VM)  "
         f"linux={caps['linux']}  macos={caps['macos']}")
+    if manage_vm:
+        say(f"  win VM    : auto start/stop '{vm_cfg['domain']}' (manage)")
     if args.parallel:
         say(f"  logs      : {log_dir}/<project>-<host>.log")
     say(f"  passthru  : {' '.join(passthrough) or '(none)'}")
@@ -464,6 +546,9 @@ def main() -> None:
     for pd in projects:
         hs = [h for (p, h) in jobs if p == pd]
         say(f"    - {pd.name:<20} {', '.join(hs)}")
+
+    # Bring the Windows VM up (start it if shut off) before any windows build.
+    started_vm = vm_ensure_up(vm_cfg) if (manage_vm and not args.dry_run) else False
 
     # Run.
     t0 = time.monotonic()
@@ -478,6 +563,8 @@ def main() -> None:
         with _PRINT_LOCK:
             warn("interrupted -- queued jobs cancelled; "
                  "in-flight build(s) stopped (see logs)")
+        if started_vm:
+            vm_shutdown(vm_cfg)          # we started it -- clean up on abort
         sys.exit(130)
     total = time.monotonic() - t0
 
@@ -500,6 +587,13 @@ def main() -> None:
         say("  SKIPPED: " + ", ".join(f"{r.project}/{r.host}" for r in skipped))
     if failed:
         say("  FAILED: " + ", ".join(f"{r.project}/{r.host}" for r in failed))
+    if started_vm:
+        win_failed = any(r.host == "windows" and r.status == "fail" for r in results)
+        if win_failed:
+            warn(f"windows build(s) failed -- leaving VM '{vm_cfg['domain']}' UP "
+                 f"for debugging (shut down: virsh shutdown {vm_cfg['domain']}).")
+        else:
+            vm_shutdown(vm_cfg)
     sys.exit(1 if failed else 0)
 
 
