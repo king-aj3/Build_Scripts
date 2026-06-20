@@ -92,7 +92,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.2.0"
+SCHED_VERSION = "1.2.1"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -297,8 +297,12 @@ def schedule_parallel(jobs, caps, build_all_py, passthrough, log_dir, dry):
         for fut in cf.as_completed(futs):
             results.append(fut.result())
     finally:
+        # cancel_futures drops queued-but-unstarted jobs so a Ctrl-C actually
+        # stops the run instead of draining each lane's queue (esp. the cap-1
+        # Windows lane); wait=False returns at once -- the in-flight child has
+        # already taken the terminal's SIGINT.
         for ex in lanes.values():
-            ex.shutdown(wait=True)
+            ex.shutdown(wait=False, cancel_futures=True)
     return results
 
 
@@ -430,12 +434,18 @@ def main() -> None:
 
     # Run.
     t0 = time.monotonic()
-    if args.parallel:
-        results = schedule_parallel(jobs, caps, build_all_py, passthrough,
-                                    log_dir, args.dry_run)
-    else:
-        results = schedule_sequential(jobs, build_all_py, passthrough,
-                                      log_dir, args.dry_run)
+    try:
+        if args.parallel:
+            results = schedule_parallel(jobs, caps, build_all_py, passthrough,
+                                        log_dir, args.dry_run)
+        else:
+            results = schedule_sequential(jobs, build_all_py, passthrough,
+                                          log_dir, args.dry_run)
+    except KeyboardInterrupt:
+        with _PRINT_LOCK:
+            warn("interrupted -- queued jobs cancelled; "
+                 "in-flight build(s) stopped (see logs)")
+        sys.exit(130)
     total = time.monotonic() - t0
 
     # Summary.

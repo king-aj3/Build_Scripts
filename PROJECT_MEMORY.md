@@ -814,6 +814,15 @@ downloads the artifact into `dist/macos-arm64/`. Design decisions:
   shipped as-is by user decision.
 
 ## Changelog
+- 2026-06-20 — build_projects.py v1.2.1: **Ctrl-C now actually stops a run.** The
+  parallel scheduler's `finally` called `executor.shutdown(wait=True)`, which does
+  NOT cancel queued futures — so an interrupt drained each lane's queue instead of
+  aborting (the cap-1 Windows lane kept launching the next build *after* the SIGINT,
+  so it survived and ran to completion). Fix: `shutdown(wait=False, cancel_futures=
+  True)` cancels unstarted jobs; in-flight children still take the terminal's SIGINT.
+  `main()` now catches `KeyboardInterrupt`, prints a clean WARNING, and exits 130
+  instead of dumping a traceback. (Found while diagnosing a real interrupted 9-job
+  run where 4 jobs FAILed with `KeyboardInterrupt` but Thrift/windows kept building.)
 - 2026-06-19 — build_all.py v1.2.6: package deliverables — **windows + macOS →
   `.zip`** (`_package_zip`; fixes the 0-byte Gumroad upload; macOS exec bit
   preserved in the zip), **linux → `.tar.gz` ONLY** (`_package_linux`; native
