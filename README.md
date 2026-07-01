@@ -156,9 +156,10 @@ runner) — see `USER_GUIDE.md` → "macOS without a Mac".
 per-OS concurrency lane, so independent work overlaps:
 
 ```bash
-python <Build_Scripts>/build_projects.py                   # the default set in build_projects.toml
+python <Build_Scripts>/build_projects.py                   # default set: Linux + Windows (macOS skipped)
+python <Build_Scripts>/build_projects.py --only linux,windows,macos   # all three, incl. macOS
+python <Build_Scripts>/build_projects.py --menu            # interactive picker, then build
 python <Build_Scripts>/build_projects.py --windows-jobs 2  # 2 concurrent Windows builds
-python <Build_Scripts>/build_projects.py --only linux,windows,macos
 ```
 
 - **Lanes:** `windows = --windows-jobs` (default 1; one shared 16-vCPU VM is the

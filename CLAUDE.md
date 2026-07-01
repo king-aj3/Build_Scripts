@@ -2,7 +2,7 @@
 
 **What it is.** Shared Nuitka build tooling used across ALL the user's PyCharm projects. A single `build.py` compiles *any* project to a native executable (invoked from PyCharm External Tools or CLI); `build_all.py` orchestrates the same `build.py` across Windows/Linux/macOS hosts. `sync_projects.py` keeps the local repos in step with GitHub. Config-driven via `build_config.toml` or `pyproject [tool.nuitka_builder]`, else pure auto-detection.
 
-**Status.** Active. build.py v1.11.1, build_all.py v1.2.7, build_projects.py v1.4.1, sync_projects.py v1.0.0 (per ABOUT.md, 2026-06-20).
+**Status.** Active. build.py v1.11.1, build_all.py v1.2.7, build_projects.py v1.5.0, sync_projects.py v1.0.0 (per ABOUT.md, 2026-07-01).
 
 ## Stack & layout
 - Python 3.11+ host (stdlib `tomllib`; `tomli` fallback on 3.10). No third-party deps — no requirements.txt.

@@ -3,8 +3,20 @@
 > End-of-session handoff. Overwrite at the end of each working block, then commit + push.
 > Next session on any machine: `git pull`, open this folder in Claude Code, ask Claude to read CLAUDE.md + NEXT_SESSION.md and continue.
 
-## Last worked: 2026-06-20 on Linux Threadripper (home) — big build_projects session
-## What I just did (build_projects.py 1.2.0 → 1.4.1; build_all.py 1.2.6 → 1.2.7)
+## Last worked: 2026-07-01 on Linux Threadripper (home) — build_projects UX (menu + help)
+
+## What I just did (build_projects.py v1.4.1 → v1.5.0)
+- **`--menu`** — interactive picker (stdlib prompts): choose projects → OSes →
+  dry-run/sequential, see the macOS **10x-billing** caveat AT the point of choice,
+  echo the equivalent command, then build after `Run now? [y/N]`. Fills the same
+  args the flags would, so a bare run is unchanged. Smoke-tested end-to-end.
+- **Clearer `--help`** — the macOS default-skip now LEADS the `-h` description + an
+  examples epilog gives the exact `--only linux,windows,macos` command (was buried in
+  `--only`). Fixed HELP/USER_GUIDE recipes that mislabeled a bare run "all OSes".
+- Docs updated: HELP, USER_GUIDE, README, ABOUT (v1.5.0 what's-new + date),
+  PROJECT_MEMORY (design entry), CLAUDE (version). Committed + pushed.
+
+## Earlier this cycle (build_projects.py 1.2.0 → 1.4.1; build_all.py 1.2.6 → 1.2.7)
 - **v1.2.1** — Ctrl-C now actually aborts a run (`shutdown(wait=False,
   cancel_futures=True)`); clean exit 130, no traceback. (Was draining the cap-1
   windows queue and finishing builds after the interrupt.)
@@ -31,7 +43,7 @@
 - All committed + pushed to master.
 
 ## Current state
-- Branch master; **build_projects.py v1.4.1, build_all.py v1.2.7 — committed + pushed.**
+- Branch master; **build_projects.py v1.5.0, build_all.py v1.2.7 — committed + pushed.**
 - Windows lane: ONE fixed **16-vCPU** VM (measured sweet spot); `--windows-jobs 2`
   → ~25m lane-2; auto start/stop in place; dynamic sizing OFF (it hurt — see v1.4.1).
 - All linux + windows binaries current. macOS waits on quota reset or a local Mac.

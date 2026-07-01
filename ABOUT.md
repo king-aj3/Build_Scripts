@@ -3,10 +3,21 @@
 **Project:** Build_Scripts — Common Nuitka Build System
 **Script version:** 1.11.1  (build.py)
 **Orchestrator:** build_all.py v1.2.7
-**Multi-project scheduler:** build_projects.py v1.4.1
+**Multi-project scheduler:** build_projects.py v1.5.0
 **Multi-repo sync:** sync_projects.py v1.0.0  (shared: gitutil.py v1.0.0, projutil.py)
-**Date:** 2026-06-20
+**Date:** 2026-07-01
 **License:** Internal use
+
+## What's new — build_projects.py v1.5.0 (2026-07-01)
+
+- **`--menu` interactive picker.** `build_projects.py --menu` walks you through
+  project selection, OS selection, and dry-run / sequential, echoes the equivalent
+  command, and builds after a `Run now? [y/N]` confirm. The macOS **10x-billing**
+  caveat is shown right where macOS is chosen — the thing a bare run silently skips.
+- **Clearer `--help`.** The macOS default-skip now leads the `-h` description and the
+  examples give the exact all-OSes command (`--only linux,windows,macos`); it was
+  previously buried in the `--only` blurb. HELP/USER_GUIDE recipes that mislabeled a
+  bare run "all OSes" were corrected (a bare run is Linux + Windows only).
 
 ## What's new — build_projects.py v1.2.1 → v1.4.1 + build_all.py v1.2.7 (2026-06-20)
 

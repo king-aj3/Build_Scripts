@@ -515,8 +515,10 @@ python <Build_Scripts>/build_projects.py --remove-project NewProj
 ```
 
 ```bash
-# the default set (build_projects.toml), every OS, parallel:
+# the default set (build_projects.toml): Linux + Windows, parallel (macOS is SKIPPED):
 python <Build_Scripts>/build_projects.py
+python <Build_Scripts>/build_projects.py --only linux,windows,macos   # all three, incl. macOS
+python <Build_Scripts>/build_projects.py --menu                 # interactive picker, then build
 python <Build_Scripts>/build_projects.py --only linux           # safe Linux-only run
 python <Build_Scripts>/build_projects.py --sequential           # one at a time, live
 python <Build_Scripts>/build_projects.py --dry-run              # preview the schedule

@@ -5,6 +5,22 @@ that touch the architecture.
 
 ---
 
+## build_projects.py `--menu` + macOS-skip clarity (v1.5.0, 2026-07-01)
+
+**Why.** The macOS default-skip (`_DEFAULT_SKIP_HOSTS = {"macos"}`, added v1.2.2 for
+Actions billing) is correct but easy to forget: a bare run silently builds Linux +
+Windows only, and `-h` buried the note inside the `--only` help. Two fixes: (1) the
+`--help` description now LEADS with the skip and an epilog gives the exact
+`--only linux,windows,macos` command; (2) a `--menu` interactive picker (stdlib
+`input()` prompts — the PyCharm run console is not a raw TTY, so it's
+type-a-number-to-toggle, Enter-to-accept, not live keypresses) walks projects → OSes
+→ dry-run/sequential, shows the macOS 10x caveat AT the point of choice, echoes the
+equivalent command, and builds after a `Run now?` confirm. The menu just fills the
+same `args` the flags would (`projects/only/dry_run/parallel`) and falls through to
+the existing scheduler — no parallel code path; `--menu` is a flag, so a bare run is
+unchanged. Also corrected HELP/USER_GUIDE recipes that wrongly called a bare run
+"all OSes" (it is Linux + Windows).
+
 ## build_all.py — cross-OS orchestrator (v1.0.0)
 
 **Why a separate script, not a flag on build.py.** Nuitka cannot

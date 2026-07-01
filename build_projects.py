@@ -97,7 +97,7 @@ from projutil import (
     write_projects as _write_projects,
 )
 
-SCHED_VERSION = "1.4.1"
+SCHED_VERSION = "1.5.0"
 
 # A host with no explicit lane cap is treated as serial (cap 1) -- the safe
 # default for any unknown, possibly-shared build host.
@@ -455,6 +455,119 @@ def schedule_parallel(jobs, caps, build_all_py, passthrough, log_dir, dry, win_j
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
+#  --------------------------------------------------------------------------
+#  Interactive menu (--menu): pick projects / OSes / options, then build.
+#  Stdlib input() prompts (works in the PyCharm run console, which is not a raw
+#  TTY -- so it's type-a-number-to-toggle, Enter to accept, not live keypresses).
+#  --------------------------------------------------------------------------
+def _ask(prompt: str) -> str:
+    """input() that turns EOF (piped / no terminal) into a clean cancel."""
+    try:
+        return input(prompt)
+    except EOFError:
+        say("\n(no input -- menu cancelled)")
+        sys.exit(0)
+
+
+def _ask_yn(prompt: str, default: bool = False) -> bool:
+    hint = "Y/n" if default else "y/N"
+    while True:
+        a = _ask(f"{prompt} [{hint}]: ").strip().lower()
+        if not a:
+            return default
+        if a in ("y", "yes"):
+            return True
+        if a in ("n", "no"):
+            return False
+        say("  please answer y or n.")
+
+
+def _run_menu_into_args(args, config_path: Path) -> None:
+    """Fill args.projects / only / dry_run / parallel from simple prompts, echo the
+    equivalent command, then either continue (build) or exit. The macOS 10x-billing
+    caveat is shown right where it's chosen -- the thing a bare run silently skips."""
+    projects = load_default_projects(config_path)
+    if not projects:
+        die("no configured projects yet -- add one with --add-project NAME first.")
+    on = [True] * len(projects)
+    while True:
+        say("")
+        say("Projects -- type a number to toggle, Enter to accept:")
+        for i, p in enumerate(projects):
+            hosts = ", ".join(enabled_hosts(p)) or "no hosts configured"
+            say(f"  [{'x' if on[i] else ' '}] {i + 1}) {p.name:<20} ({hosts})")
+        say("  a) all   n) none   d) discover under a root")
+        c = _ask("> ").strip().lower()
+        if c == "":
+            if any(on):
+                break
+            say("  (pick at least one project)")
+        elif c == "a":
+            on = [True] * len(projects)
+        elif c == "n":
+            on = [False] * len(projects)
+        elif c == "d":
+            root = _ask("  discover root [~/PycharmProjects]: ").strip() or "~/PycharmProjects"
+            found = discover_projects(Path(root).expanduser().resolve())
+            if found:
+                projects, on = found, [True] * len(found)
+            else:
+                say("  none found there.")
+        elif c.isdigit() and 1 <= int(c) <= len(projects):
+            on[int(c) - 1] = not on[int(c) - 1]
+        else:
+            say("  ? (a number, a, n, d, or Enter)")
+    chosen = [p for p, keep in zip(projects, on) if keep]
+
+    names = ["linux", "windows", "macos"]
+    notes = {"linux": "builds locally", "windows": "SSH build VM",
+             "macos": "GitHub Actions -- bills 10x, SKIPs if quota spent"}
+    os_on = {"linux": True, "windows": True, "macos": False}   # macOS is opt-in
+    while True:
+        say("")
+        say("Operating systems -- type a name or number to toggle, Enter to accept:")
+        for i, n in enumerate(names):
+            flag = " (!)" if n == "macos" else "    "
+            say(f"  [{'x' if os_on[n] else ' '}] {i + 1}) {n:<8}{flag} {notes[n]}")
+        c = _ask("> ").strip().lower()
+        if c == "":
+            if any(os_on.values()):
+                break
+            say("  (pick at least one OS)")
+        elif c in os_on:
+            os_on[c] = not os_on[c]
+        elif c.isdigit() and 1 <= int(c) <= len(names):
+            os_on[names[int(c) - 1]] = not os_on[names[int(c) - 1]]
+        else:
+            say("  ? (linux, windows, macos, a number, or Enter)")
+    only = [n for n in names if os_on[n]]
+
+    say("")
+    dry = _ask_yn("Dry-run (show the plan, build nothing)?", default=False)
+    parallel = not _ask_yn("Run strictly one job at a time (sequential)?", default=False)
+
+    args.all = False
+    args.projects = [str(p) for p in chosen]
+    args.only = ",".join(only)
+    args.dry_run = dry
+    args.parallel = parallel
+
+    flags = f"--only {args.only}"
+    if dry:
+        flags += " --dry-run"
+    if not parallel:
+        flags += " --sequential"
+    say("")
+    say("-> build_projects.py " + " ".join(p.name for p in chosen) + " " + flags)
+    if "macos" in only:
+        say("   macOS builds on GitHub Actions (bills 10x; reported as SKIP if the "
+            "quota is spent -- Linux/Windows still finish).")
+    if not _ask_yn("Run now?", default=False):
+        say("not run.")
+        sys.exit(0)
+    say("")
+
+
 def main() -> None:
     # Split scheduler args from build_all.py passthrough at the first bare '--'.
     argv = sys.argv[1:]
@@ -465,8 +578,26 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(
         prog="build_projects.py",
-        description="Build several projects across their OS hosts, scheduling "
-                    "(project x OS) jobs with a per-OS concurrency cap.")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Build several projects across their OS hosts, scheduling (project x OS)\n"
+            "jobs with a per-OS concurrency cap.\n"
+            "\n"
+            "IMPORTANT: a bare run builds the configured project set on LINUX + WINDOWS\n"
+            "only -- macOS is SKIPPED by default because its GitHub Actions runs bill at\n"
+            "10x and the private-repo free quota is limited. Build macOS explicitly by\n"
+            "naming it in --only (see examples below)."),
+        epilog=(
+            "examples:\n"
+            "  build_projects.py                             default set: Linux + Windows (macOS skipped)\n"
+            "  build_projects.py --only linux,windows,macos  default set: ALL THREE, incl. macOS\n"
+            "  build_projects.py --only linux                Linux only\n"
+            "  build_projects.py --only linux,windows,macos --dry-run   preview the full job plan\n"
+            "  build_projects.py ../ajj3-brain --only linux,windows,macos   one project, all OSes\n"
+            "  build_projects.py --list-projects             show the configured project set\n"
+            "\n"
+            "macOS builds on GitHub Actions (gh CLI). If a run is declined for billing/\n"
+            "quota it is reported as SKIP (not a failure) and Linux/Windows still finish."))
     ap.add_argument("projects", nargs="*", help="Project dirs to build")
     ap.add_argument("--all", action="store_true",
                     help="Discover projects under --root (dirs with build_hosts.toml)")
@@ -489,8 +620,9 @@ def main() -> None:
     mode.add_argument("--sequential", dest="parallel", action="store_false",
                       help="Run strictly one job at a time")
     ap.add_argument("--only", metavar="A,B",
-                    help="Restrict to these OS hosts (e.g. linux,macos). macOS is "
-                         "skipped by default (Actions billing); name it here to build it.")
+                    help="Restrict to these OS hosts (linux,windows,macos). On a bare "
+                         "run macOS is SKIPPED (Actions bills 10x); add it here to build "
+                         "it, e.g. --only linux,windows,macos.")
     ap.add_argument("--linux-jobs", type=int, default=2,
                     help="Max concurrent Linux builds (default 2)")
     ap.add_argument("--mac-jobs", type=int, default=None,
@@ -502,6 +634,9 @@ def main() -> None:
                     help="Path to build_all.py (default: alongside this script)")
     ap.add_argument("--log-dir", metavar="DIR", default="build-logs",
                     help="Per-job logs in parallel mode (default: ./build-logs)")
+    ap.add_argument("--menu", action="store_true",
+                    help="Interactive menu: pick projects, OSes and options, then build "
+                         "(shows the macOS 10x-billing caveat where you choose it).")
     ap.add_argument("--dry-run", action="store_true", help="Print schedule; build nothing")
     ap.add_argument("--no-manage-vm", action="store_true",
                     help="Don't auto start/stop the Windows VM (overrides "
@@ -524,6 +659,9 @@ def main() -> None:
                     else Path(__file__).resolve().parent / "build_all.py")
     if not build_all_py.is_file():
         die(f"build_all.py not found at: {build_all_py}  (use --build-all PATH)")
+
+    if args.menu:                                   # interactive picker fills args, or exits
+        _run_menu_into_args(args, config_path)
 
     # Resolve the project list: explicit args > --all discovery > config default.
     if args.all:

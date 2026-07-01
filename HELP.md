@@ -331,7 +331,8 @@ is taken as a sibling project dir; a project qualifies once it has its own
 | `--config PATH`            | Default project-list TOML (default: `build_projects.toml` beside the script). |
 | `--parallel`             | **Default.** Overlap jobs by lane; capture each to `build-logs/<project>-<host>.log`. |
 | `--sequential`           | Run strictly one job at a time, streaming each build live.   |
-| `--only A,B`             | Restrict to these OS hosts (e.g. `--only linux,macos`).      |
+| `--menu`                 | Interactive picker for projects, OSes and options, then build after a confirm (surfaces the macOS 10x-billing caveat at the point of choice). |
+| `--only A,B`             | Restrict to these OS hosts. **A bare run skips macOS** (Actions bills 10x); include it with `--only linux,windows,macos`. |
 | `--linux-jobs N`         | Max concurrent **Linux** builds (default 2).                 |
 | `--mac-jobs N`           | Max concurrent **macOS** builds (default: # of projects).    |
 | `--all --root DIR`       | Discover every dir under `DIR` that has a `build_hosts.toml`.|
@@ -373,7 +374,9 @@ fastest (lane-2 ~25 min). Enable only on hardware where more vCPU actually helps
 
 | Goal                                   | Command                                                          |
 | -------------------------------------- | ---------------------------------------------------------------- |
-| Build the default project set, all OSes| `python build_projects.py`                                       |
+| Default set — Linux + Windows (macOS skipped) | `python build_projects.py`                                |
+| Default set — ALL THREE, incl. macOS   | `python build_projects.py --only linux,windows,macos`            |
+| Interactive menu, then build           | `python build_projects.py --menu`                                |
 | List the default project set           | `python build_projects.py --list-projects`                       |
 | Add a project to the default set       | `python build_projects.py --add-project NewProj`                 |
 | Remove a project from the default set  | `python build_projects.py --remove-project NewProj`              |
